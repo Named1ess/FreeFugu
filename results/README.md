@@ -166,3 +166,34 @@ correctly; this is in-sample, not held-out, so some of the lift is overfitting
 to 8 items. What's rigorously demonstrated is the *mechanism*: per-step routing
 fitness = a real multi-turn rollout, optimized gradient-free, beats the base
 head. A larger held-out eval is the scaling step, not a mechanism question.
+
+## Adaptive k-of-n pool — REAL, per-STEP (the reverted experiment, done right)
+
+`train/train_adaptive_pool_perstep.py` is the faithful version of an experiment
+that failed twice before and was correctly reverted. The old
+`train_adaptive_pool_real.py` was wrong two ways: (1) per-QUESTION not per-step,
+and (2) its reward grafted worker-id semantics onto ToolScale *tool* names, so
+the subset reward was always 0. This version fixes both: per question a random
+**k-of-n subset** of the local worker pool is offered, the router is **masked to
+that subset every turn** (new `agent_mask` on `FuguRouter.route` + `Coordinator`,
+backward-compatible — self-test still 95%/100%), and fitness is the terminal
+reward of the full per-step `Coordinator` rollout over GSM8K. Log:
+[`adaptive_perstep_run.txt`](adaptive_perstep_run.txt).
+
+```
+pool (3, local multi-vendor): deepseek-distill-7b, llama-3.2-3b, gemma-3-4b   k=2
+base head, subset-masked rollout:   solved 0.625   (n=8, max_turns=4)
+sep-CMA over random k-of-n subsets: solved 1.000   PASS (>base)
+```
+
+Both numbers are under the SAME availability masking (neither base nor trained
+can route to an absent worker); the only difference is whether the head was
+*trained* over random subsets. Training over varying offered subsets is Fugu's
+"swap the pool / opt out any provider" promise made concrete.
+
+**Honest caveat — small n (same as the per-step run):** 1.000 is in-sample over
+8 questions, so part of it is overfitting. What's rigorously shown is the
+*mechanism*: subset-aware per-step routing, trained gradient-free over random
+k-of-n offered subsets via real multi-turn rollouts, beats the untrained base
+under the same masking. Held-out scale-up is the next step, not a mechanism
+question.

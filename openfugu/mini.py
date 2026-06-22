@@ -176,10 +176,15 @@ class FuguRouter:
             return int(self.rng.choice(len(p), p=p))
         return int(torch.argmax(logits))            # argmax = eval behavior
 
-    def route(self, messages: list[dict], sample: bool = False) -> dict:
+    def route(self, messages: list[dict], sample: bool = False,
+              agent_mask=None) -> dict:
         h = self._hidden(messages)
         logits = self.head @ h                      # (10,)
         agent_logits, role_logits = logits[:N_AGENTS], logits[N_AGENTS:]
+        if agent_mask is not None:                  # adaptive k-of-n: only route to
+            torch = self.torch                      # workers offered this turn [CODE]
+            m = torch.as_tensor(agent_mask, dtype=torch.bool, device=agent_logits.device)
+            agent_logits = agent_logits.masked_fill(~m, float("-inf"))
         agent_id = self._pick(agent_logits, sample)
         role_id = self._pick(role_logits, sample)
         return {
@@ -299,10 +304,12 @@ class Coordinator:
     """
     def __init__(self, router: FuguRouter, worker: WorkerFn,
                  max_turns: int = MAX_TURNS, stop_token: str = "ACCEPT",
-                 sample: bool = True, suppress_cold_verifier: bool = True):
+                 sample: bool = True, suppress_cold_verifier: bool = True,
+                 agent_mask=None):
         self.router, self.worker = router, worker
         self.max_turns, self.stop_token, self.sample = max_turns, stop_token, sample
         self.suppress_cold_verifier = suppress_cold_verifier
+        self.agent_mask = agent_mask        # adaptive k-of-n: workers offered this run [CODE]
 
     def run(self, query: str, verbose: bool = False) -> RunResult:
         # Per-step coordination, faithful to step_trinity. The router conditions
@@ -319,7 +326,7 @@ class Coordinator:
             # router sees [system_router, {user: obs}] — obs carries prior solver thoughts
             route_msgs = [{"role": "system", "content": ROUTER_SYSTEM_PROMPT.format(num_agents=N_AGENTS)},
                           {"role": "user", "content": obs}]
-            r = self.router.route(route_msgs, sample=self.sample)
+            r = self.router.route(route_msgs, sample=self.sample, agent_mask=self.agent_mask)
             role = r["role_name"]
             if suggested_role:                      # thinker override consumes here [CODE]
                 role, suggested_role = suggested_role, None
