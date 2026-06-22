@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
+# the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
+# Reference: OpenAI-compatible serving layer for the OpenFugu TRINITY coordinator. Original code.
 """
 serve.py — Fugu as a single OpenAI-compatible model endpoint.
 

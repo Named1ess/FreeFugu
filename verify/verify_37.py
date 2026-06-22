@@ -1,4 +1,6 @@
-import os
+# OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
+# the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
+# Reference: 37-case routing regression vs the released TRINITY checkpoint. Fixture pulled from trinity_coordinator (MIT, nshkrdotcom) at runtime; original verification code.
 """37-case batch verification — statistical proof (not single-case luck).
 Applies SVF in state_dict order, runs each fixture transcript through the
 router, compares argmax agent/role to the fixture's expected values.
@@ -6,6 +8,7 @@ Reports hit-rate AND the naive baseline (always-guess-most-common) so we
 know whether matches are real signal or just the {4:19,0:17} class prior.
 Tries raw transcript ('role: content') vs chat-template formatting.
 """
+import os
 import json, numpy as np, torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from collections import Counter

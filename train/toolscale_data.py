@@ -1,3 +1,6 @@
+# OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
+# the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
+# Reference: Conductor GRPO data+reward over nvidia/ToolScale (CC-BY-4.0 dataset, loaded at runtime, not redistributed). Reward design original; mirrors the trl GRPO data contract.
 """ToolScale data + reward for training a Conductor (Fugu-Ultra line) with GRPO.
 
 Drop-in for the conductor_supplementary Hydra stack: mirrors the signatures of

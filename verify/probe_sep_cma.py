@@ -1,3 +1,6 @@
+# OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
+# the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
+# Reference: sep-CMA-ES mechanism probe (Ros & Hansen 2008). Original code.
 """sep-CMA-ES mechanism probe — what 'separable' actually means in pycma,
 and how it behaves at Fugu's real scale. All results are reproducible.
 

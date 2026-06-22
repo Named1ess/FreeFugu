@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
+# the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
+# Reference: Learning to Orchestrate Agents in NL with the Conductor (arXiv:2512.04388, Sakana AI). Independent reimplementation of the workflow-DAG executor from the paper; no Sakana source code is copied.
 """
 fugu_ultra.py — a faithful, runnable reconstruction of Sakana Fugu-Ultra's
 Conductor line: instead of routing one worker per turn (that's fugu_mini.py /

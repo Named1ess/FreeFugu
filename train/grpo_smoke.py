@@ -1,3 +1,6 @@
+# OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
+# the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
+# Reference: Minimal GRPO smoke test. Original code.
 import os
 """Minimal GRPO smoke: prove the Conductor training loop actually turns on
 ToolScale with our reward. Qwen3-0.6B, use_vllm=False (HF generation), 2 steps.

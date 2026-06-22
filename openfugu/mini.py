@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
+# the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
+# Reference: TRINITY: An Evolved LLM Coordinator (arXiv:2512.04695, Sakana AI). Independent reimplementation from the paper + the authors' released checkpoint; no Sakana source code is copied.
 """
 fugu_mini.py — a faithful, minimal, runnable reconstruction of Sakana Fugu's
 inference path (the TRINITY line), built entirely from reverse-engineered

@@ -1,4 +1,6 @@
-import os
+# OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
+# the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
+# Reference: End-to-end routing check vs the released TRINITY checkpoint. Original code.
 """v2: rigorous verification — fixes two bugs in v1:
   (1) consume SVF offsets in real state_dict ORDER (embed first, lm_head last),
       matching export_sakana_trinity_safetensors.py (state_dict iteration +
@@ -7,6 +9,7 @@ import os
 Decisive test: trinity_coordinator fixture reports agent_id=4, role_id=0 for a
 fixed transcript. If applying SVF in this order reproduces it, the order is proven.
 """
+import os
 import numpy as np, torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 

@@ -1,3 +1,6 @@
+# OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
+# the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
+# Reference: GRPO training of an OpenFugu Conductor (Conductor recipe, arXiv:2512.04388). Original code over the trl library.
 import os
 """Real GRPO training run for the Conductor on ToolScale.
 Llama-3.2-3B-Instruct (follows the JSON format), 8 generations/group for GRPO

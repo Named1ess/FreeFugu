@@ -1,8 +1,11 @@
-import os
+# OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
+# the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
+# Reference: Logit-margin analysis of routing misses. Original code.
 """Close two remaining loose ends, locally + on GPU:
   (1) the 2 missed agent cases: are they low-margin (numeric noise) or real disagreement?
   (2) cross-check our agent logits vs the recorded logits fixture (independent impl).
 """
+import os
 import json, numpy as np, torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
