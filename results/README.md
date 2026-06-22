@@ -30,3 +30,29 @@ Trained weights: `huggingface.co/di-zhang-fdu/openfugu-conductor-3b`.
 **+107%** over the best single worker, reaching **100%** of the oracle ceiling
 (see README). This is the central Fugu claim, reproduced on a coordinator we
 trained ourselves.
+
+## TRINITY self-training on REAL data (GSM8K) — honest result
+
+`train/train_trinity_real.py` runs the same sep-CMA-ES loop on REAL data: real
+Qwen3-0.6B hidden states as routing features, a real Novita worker pool, and
+numeric-answer-match reward on GSM8K. Full log:
+[`trinity_gsm8k_run.txt`](trinity_gsm8k_run.txt).
+
+The real-data loop **runs and passes** (coordinator ≥ best single worker), but
+on this setup it only **ties** the best worker rather than beating it:
+
+```
+per-worker solved: deepseek-v4-pro=0.83, qwen3.5-plus=0.92, gemma-4-31b-it=0.92
+coordinator      = 0.917   (= best single worker)
+```
+
+**Why it ties, not wins — stated plainly:** GSM8K is too easy for these modern
+workers (two of three already solve ~92% alone), so there is little
+"worker A succeeds where B fails" signal for routing to exploit; the ceiling is
+near-saturated and the coordinator correctly learns to route to a strong worker,
+but there is no headroom to *beat* it. The mock harness shows the large +107%
+gain precisely because it is built with sharply differentiated specialists
+(0.9 vs 0.2 per domain). Demonstrating orchestration value on real data needs a
+pool with **complementary** strengths and tasks hard enough that single models
+fail — that's the next experiment, not a property of the loop (which is proven
+to run end-to-end on real verifiable tasks here).
