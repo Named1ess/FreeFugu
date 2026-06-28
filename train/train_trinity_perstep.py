@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -305,7 +306,8 @@ def main(argv: list[str] | None = None) -> int:
     import torch
 
     vector = ensure_base_vector(args.vector)
-    worker, labels = build_worker(args)
+    worker_build = build_worker(args)
+    worker, labels = worker_build.worker, worker_build.labels
     print(f"[perstep] worker slots ({len(labels)}): {labels}", flush=True)
 
     tasks = load_gsm8k_tasks(args.n_train)
@@ -358,8 +360,10 @@ def main(argv: list[str] | None = None) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     np.save(out, best_vec)
+    sidecar = write_sidecar_json(out, args, worker_build, vector, base_fit, best_fit, best_vec.shape[0])
     print(f"\n[result] per-step trained head solved={best_fit:.3f} vs base {base_fit:.3f}")
     print(f"[result] saved {out} ({best_vec.shape[0]} floats)")
+    print(f"[result] saved slot metadata {sidecar}")
     if best_fit > base_fit + 0.01:
         print("PASS — per-step sep-CMA improved the router over the rollout baseline")
     else:
