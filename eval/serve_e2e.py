@@ -2,19 +2,22 @@
 # OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
 # the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
 # Reference: end-to-end serving proof. Boots serve.py with the TRAINED per-step
-# head + a REAL local worker pool, POSTs a GSM8K question to the OpenAI-compatible
+# head + a REAL worker pool, POSTs a GSM8K question to the OpenAI-compatible
 # endpoint, and asserts a real worker-produced numeric answer. Original code.
 """
 serve_e2e.py — end-to-end proof that Fugu serves as one model, for real.
 
 This is the honest "end to end": it does NOT call Coordinator.run directly. It
-boots the actual HTTP server (trained head + local pool), waits for readiness,
+boots the actual HTTP server (trained head + local or LiteLLM pool), waits for readiness,
 issues a real POST to /v1/chat/completions, and checks the answer came back
-through the full per-step loop, produced by a real local worker (not MockWorker).
+through the full per-step loop, produced by a real worker (not MockWorker).
 
   python serve_e2e.py \
     --model <qwen3-0.6b dir> --vector model_iter_60.npy --head trinity_perstep.npy \
     --local-models "<llama path>,<gemma path>" --port 8099
+  python serve_e2e.py \
+    --model <qwen3-0.6b dir> --vector model_iter_identity.npy --head trinity_perstep.npy \
+    --slot-config-env FUGU_SLOT_CONFIG --port 8099
 """
 from __future__ import annotations
 import argparse, json, os, re, subprocess, sys, time, urllib.request
@@ -51,7 +54,10 @@ def main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--vector", default="model_iter_60.npy")
     ap.add_argument("--head", default=None, help="trained head-only (10240) vector")
-    ap.add_argument("--local-models", required=True, metavar="CSV")
+    ap.add_argument("--slot-models", metavar="CSV", help="LiteLLM model ids; max 7")
+    ap.add_argument("--slot-config", metavar="JSON", help="JSON file with LiteLLM slot configs; max 7")
+    ap.add_argument("--slot-config-env", metavar="ENV", help="env var containing LiteLLM slot configs JSON")
+    ap.add_argument("--local-models", metavar="CSV")
     ap.add_argument("--port", type=int, default=8099)
     ap.add_argument("--max-turns", type=int, default=4)
     ap.add_argument("--serve-script", default=os.path.join(
@@ -64,11 +70,22 @@ def main():
          "April and May?")
     GOLD = "72"
 
+    if not (args.local_models or args.slot_models or args.slot_config or args.slot_config_env):
+        ap.error("provide --local-models, --slot-models, --slot-config, or --slot-config-env")
+
     cmd = [sys.executable, args.serve_script, "--model", args.model,
-           "--vector", args.vector, "--local-models", args.local_models,
-           "--port", str(args.port), "--max-turns", str(args.max_turns)]
+           "--vector", args.vector, "--port", str(args.port),
+           "--max-turns", str(args.max_turns)]
     if args.head:
         cmd += ["--head", args.head]
+    if args.local_models:
+        cmd += ["--local-models", args.local_models]
+    if args.slot_models:
+        cmd += ["--slot-models", args.slot_models]
+    if args.slot_config:
+        cmd += ["--slot-config", args.slot_config]
+    if args.slot_config_env:
+        cmd += ["--slot-config-env", args.slot_config_env]
     print(f"[e2e] booting server: {' '.join(cmd)}", flush=True)
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, bufsize=1)
@@ -93,16 +110,16 @@ def main():
         turns = resp.get("usage", {}).get("fugu_turns", 0)
         got = numeric_answer(content)
         is_mock = any("MOCK" in l for l in server_lines)
-        is_local = any("LOCAL" in l for l in server_lines)
+        is_real_pool = any(("LOCAL" in l or "litellm" in l) for l in server_lines)
 
         print(f"\n[e2e] answer={got!r} (gold {GOLD}) turns={turns} latency={dt:.1f}s", flush=True)
-        print(f"[e2e] pool: local={is_local} mock={is_mock}", flush=True)
+        print(f"[e2e] pool: real={is_real_pool} mock={is_mock}", flush=True)
         print(f"[e2e] content[:200]={content[:200]!r}", flush=True)
 
-        ok = (got == GOLD) and (turns > 0) and is_local and not is_mock
+        ok = (got == GOLD) and (turns > 0) and is_real_pool and not is_mock
         if ok:
             print("\nPASS — real request answered correctly through the per-step loop "
-                  "over a real local worker pool (not mock)")
+                  "over a real worker pool (not mock)")
             return 0
         print("\nFAIL — see above (answer/turns/pool check failed)")
         return 1

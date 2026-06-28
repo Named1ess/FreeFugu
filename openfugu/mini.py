@@ -35,6 +35,11 @@ from typing import Callable
 
 import numpy as np
 
+try:
+    from .slot_config import SlotSpec, load_slot_specs
+except ImportError:  # script execution from openfugu/
+    from slot_config import SlotSpec, load_slot_specs
+
 # ---- verified structural constants ------------------------------------------
 HIDDEN = 1024              # [EXEC] Qwen3-0.6B hidden size
 N_AGENTS = 7               # [DATA] es_log.json: 7-model worker pool
@@ -241,27 +246,33 @@ class LiteLLMWorker:
 
     `slot_models` is a list of up to 7 litellm model ids (e.g.
     'openai/gpt-4o-mini', 'anthropic/claude-3-5-sonnet', 'gemini/gemini-1.5-pro').
+    `slot_specs` can provide the full 7-slot mapping with per-slot api_base and
+    api_key.
     Credentials/base url are taken from litellm's normal env resolution, or
     passed through `api_key`/`api_base` (read from FUGU_API_KEY/FUGU_BASE_URL).
     Default points every slot at FUGU_WORKER_MODEL so the loop runs with one model."""
     def __init__(self, slot_models: list[str] | None = None,
+                 slot_specs: list[SlotSpec] | None = None,
                  api_key: str | None = None, api_base: str | None = None,
                  max_tokens: int = 1024, temperature: float = 0.2):
         import litellm
         self.litellm = litellm
         default_model = os.environ.get("FUGU_WORKER_MODEL", "openai/gpt-4o-mini")
-        self.slot_models = slot_models or [default_model] * N_AGENTS
+        self.slot_specs = slot_specs or [SlotSpec(model=m) for m in (slot_models or [default_model] * N_AGENTS)]
+        self.slot_models = [spec.model for spec in self.slot_specs]
         self.api_key = api_key or os.environ.get("FUGU_API_KEY") or os.environ.get("OPENAI_API_KEY")
         self.api_base = api_base or os.environ.get("FUGU_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
         self.max_tokens, self.temperature = max_tokens, temperature
 
     def __call__(self, role_name: str, messages: list, agent_id: int) -> str:
-        model = self.slot_models[agent_id % len(self.slot_models)]
+        spec = self.slot_specs[agent_id % len(self.slot_specs)]
         msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
-        kw = dict(model=model, messages=msgs,
+        kw = dict(model=spec.model, messages=msgs,
                   max_tokens=self.max_tokens, temperature=self.temperature)
-        if self.api_key:  kw["api_key"] = self.api_key
-        if self.api_base: kw["api_base"] = self.api_base
+        api_key = spec.api_key or self.api_key
+        api_base = spec.api_base or self.api_base
+        if api_key:  kw["api_key"] = api_key
+        if api_base: kw["api_base"] = api_base
         r = self.litellm.completion(**kw)
         return r.choices[0].message.content or ""
 
@@ -459,6 +470,10 @@ def main(argv=None):
                     help="demo with a real worker pool via litellm (needs FUGU_API_KEY/_BASE_URL)")
     ap.add_argument("--slot-models", metavar="CSV",
                     help="comma-separated litellm model ids for the 7 agent slots")
+    ap.add_argument("--slot-config", metavar="JSON",
+                    help="JSON file containing exactly 7 litellm slot configs")
+    ap.add_argument("--slot-config-env", metavar="ENV",
+                    help="env var containing exactly 7 litellm slot configs as JSON")
     ap.add_argument("--query", help="override the --demo query")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
@@ -486,9 +501,10 @@ def main(argv=None):
 
     if args.demo:
         if args.live:
+            specs = load_slot_specs(args.slot_config, args.slot_config_env, min_count=1, max_count=N_AGENTS)
             models = args.slot_models.split(",") if args.slot_models else None
-            worker = LiteLLMWorker(slot_models=models)
-            print("worker pool: LiteLLMWorker (live, via litellm)")
+            worker = LiteLLMWorker(slot_models=models, slot_specs=specs)
+            print(f"worker pool: LiteLLMWorker (live, via litellm, {len(worker.slot_models)} slots)")
         else:
             worker = MockWorker()
             print("worker pool: MockWorker (offline)")

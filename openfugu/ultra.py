@@ -30,6 +30,11 @@ import argparse, ast, json, os, re, sys
 from dataclasses import dataclass, field
 from typing import Callable
 
+try:
+    from .slot_config import SlotSpec, load_slot_specs, slot_labels as labels_from_specs
+except ImportError:  # script execution from openfugu/
+    from slot_config import SlotSpec, load_slot_specs, slot_labels as labels_from_specs
+
 N_AGENTS = 7
 MAX_STEPS = 5                      # [DOC] Conductor workflows up to 5 steps
 _SMART = str.maketrans("“”‘’", "\"\"''")
@@ -210,25 +215,30 @@ class ConductorExecutor:
 
 class LiteLLMWorker:
     """Provider-agnostic worker via litellm (same middle layer as fugu_mini)."""
-    def __init__(self, slot_models=None, api_key=None, api_base=None,
+    def __init__(self, slot_models=None, slot_specs: list[SlotSpec] | None = None,
+                 api_key=None, api_base=None,
                  max_tokens=1024, temperature=0.2):
         import litellm
         self.litellm = litellm
         default = os.environ.get("FUGU_WORKER_MODEL", "openai/gpt-4o-mini")
-        self.slot_models = slot_models or [default] * N_AGENTS
+        self.slot_specs = slot_specs or [SlotSpec(model=m) for m in (slot_models or [default] * N_AGENTS)]
+        self.slot_models = [spec.model for spec in self.slot_specs]
         self.api_key = api_key or os.environ.get("FUGU_API_KEY") or os.environ.get("OPENAI_API_KEY")
         self.api_base = api_base or os.environ.get("FUGU_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
         self.max_tokens, self.temperature = max_tokens, temperature
 
-    def _call(self, model, messages):
+    def _call(self, model, messages, spec: SlotSpec | None = None):
         kw = dict(model=model, messages=messages,
                   max_tokens=self.max_tokens, temperature=self.temperature)
-        if self.api_key:  kw["api_key"] = self.api_key
-        if self.api_base: kw["api_base"] = self.api_base
+        api_key = (spec.api_key if spec else None) or self.api_key
+        api_base = (spec.api_base if spec else None) or self.api_base
+        if api_key:  kw["api_key"] = api_key
+        if api_base: kw["api_base"] = api_base
         return self.litellm.completion(**kw).choices[0].message.content or ""
 
     def __call__(self, subtask, messages, agent_id):
-        return self._call(self.slot_models[agent_id % len(self.slot_models)], messages)
+        spec = self.slot_specs[agent_id % len(self.slot_specs)]
+        return self._call(spec.model, messages, spec)
 
     def conduct(self, model, messages):     # the Conductor call (more tokens)
         old = self.max_tokens; self.max_tokens = 2048
@@ -363,6 +373,10 @@ def main(argv=None):
     ap.add_argument("--local-conductor", help="path to a trained local Conductor checkpoint")
     ap.add_argument("--conductor-device", default="cuda:0")
     ap.add_argument("--slot-models", metavar="CSV", help="7 litellm worker model ids")
+    ap.add_argument("--slot-config", metavar="JSON",
+                    help="JSON file containing exactly 7 litellm slot configs")
+    ap.add_argument("--slot-config-env", metavar="ENV",
+                    help="env var containing exactly 7 litellm slot configs as JSON")
     ap.add_argument("--local-models", metavar="CSV",
                     help="local HF worker paths (path or path@device); no API needed")
     ap.add_argument("--self-test", action="store_true")
@@ -385,9 +399,10 @@ def main(argv=None):
         slot_labels = [n for n, _, _ in specs]
         print(f"workers: LOCAL ({len(specs)}): {slot_labels}")
     else:
+        slot_specs = load_slot_specs(args.slot_config, args.slot_config_env, min_count=1, max_count=N_AGENTS)
         slots = args.slot_models.split(",") if args.slot_models else None
-        worker = LiteLLMWorker(slot_models=slots)
-        slot_labels = slots or DEFAULT_SLOT_LABELS
+        worker = LiteLLMWorker(slot_models=slots, slot_specs=slot_specs)
+        slot_labels = labels_from_specs(slot_specs) if slot_specs else (slots or DEFAULT_SLOT_LABELS)
         print(f"workers: litellm ({len(slot_labels)} slots)")
 
     # Conductor: trained local checkpoint, or litellm

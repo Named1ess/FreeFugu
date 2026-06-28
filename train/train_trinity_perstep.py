@@ -1,50 +1,139 @@
 #!/usr/bin/env python3
 # OpenFugu — Apache-2.0. Part of an independent, open reimplementation of
 # the Fugu orchestrator. NOT affiliated with Sakana AI. See NOTICE.
-# Reference: TRINITY (arXiv:2512.04695). The REAL per-STEP training: sep-CMA-ES
-# optimizes the router head where fitness = terminal reward of the FULL
-# multi-turn step_trinity rollout (openfugu/mini.py Coordinator). Original code.
 """
-train_trinity_perstep.py — per-STEP TRINITY router training.
+train_trinity_perstep.py — train the serving-compatible per-step TRINITY head.
 
-Unlike train_trinity_local.py (per-QUESTION: route once, one worker answers the
-whole question), this trains at Fugu's real granularity: each sep-CMA-ES
-candidate is a router head; its fitness is the terminal reward of running the
-full per-step Coordinator loop over GSM8K — per turn the router re-reads the
-evolving obs (question + accumulated <reference_thought_N>), re-routes a
-(worker, role) action, a local worker advances one step, a verifier terminates.
+The output is a 10240-float head that can be served with:
 
-  router  : Qwen3-0.6B hidden state -> candidate head -> (agent_id, role_id)
-  workers : local multi-vendor <=8B models (one per GPU), via the Coordinator
-  reward  : terminal — did the final answer match the GSM8K number
-  train   : sep-CMA-ES over the 10240-dim head (SVF frozen)
+  python openfugu/serve.py --model <router> --vector <base-vector> --head <out>
 
-This is the piece that makes the routing per-step. Cost is real: each fitness
-eval is a multi-turn rollout with several worker generations, so scale is small.
+If the base vector is missing, this script creates an identity vector:
+SVF offsets are zero, and the initial head is zero. That is the practical path
+when the original model_iter_60.npy artifact is unavailable.
 """
 from __future__ import annotations
-import argparse, os, re, sys, glob
+
+import argparse
+import json
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "openfugu"))
-sys.path.insert(0, "/root")                      # server fallback for mini.py
-import mini
-from mini import FuguRouter, Coordinator, HIDDEN, HEAD_ROWS, N_AGENTS
+
+ROOT = Path(__file__).resolve().parents[1]
+OPENFUGU = ROOT / "openfugu"
+sys.path.insert(0, str(OPENFUGU))
+
+from mini import (  # noqa: E402
+    Coordinator,
+    FuguRouter,
+    HEAD_ROWS,
+    HIDDEN,
+    LiteLLMWorker,
+    N_AGENTS,
+    VEC_LEN,
+)
+from slot_config import SlotSpec, load_slot_specs, slot_labels  # noqa: E402
 
 
-def numeric_answer(text):
+DEFAULT_VECTOR = ROOT / "artifacts" / "model_iter_identity.npy"
+DEFAULT_HEAD = ROOT / "artifacts" / "trinity_perstep.npy"
+
+
+def numeric_answer(text: str | None) -> str | None:
     nums = re.findall(r"-?\d[\d,]*\.?\d*", (text or "").replace(",", ""))
     return nums[-1] if nums else None
 
 
+def gold_answer(answer: str) -> str:
+    return answer.split("####")[-1].strip().replace(",", "")
+
+
+def ensure_base_vector(path: str) -> str:
+    target = Path(path)
+    if target.exists():
+        return str(target)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    np.save(target, np.zeros(VEC_LEN, dtype=np.float64))
+    print(f"[perstep] created identity base vector: {target}", flush=True)
+    return str(target)
+
+
+def resolve_router_device(value: str | None) -> str | None:
+    if not value or value == "auto":
+        try:
+            import torch
+
+            return "cuda:0" if torch.cuda.is_available() else None
+        except Exception:
+            return None
+    if value.lower() == "cpu":
+        return None
+    return value
+
+
+def parse_local_specs(csv: str) -> list[tuple[str, str, str]]:
+    try:
+        import torch
+
+        n_gpu = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    except Exception:
+        n_gpu = 0
+
+    specs: list[tuple[str, str, str]] = []
+    for i, entry in enumerate(item.strip() for item in csv.split(",") if item.strip()):
+        if "@" in entry:
+            path, dev = entry.rsplit("@", 1)
+        else:
+            path = entry
+            dev = f"cuda:{(i % max(n_gpu - 1, 1)) + 1}" if n_gpu > 1 else "cpu"
+        name = os.path.basename(path.rstrip("/\\")) or f"worker-{i}"
+        specs.append((name, path, dev))
+    return specs
+
+
+def sanitized_slot_specs(specs: list[SlotSpec] | None) -> list[dict[str, Any]]:
+    if not specs:
+        return []
+    rows = []
+    for index, spec in enumerate(specs):
+        row: dict[str, Any] = {
+            "slot": index,
+            "model": spec.model,
+            "api_base": spec.api_base or "",
+            "has_api_key": bool(spec.api_key),
+        }
+        if spec.label:
+            row["label"] = spec.label
+        rows.append(row)
+    return rows
+
+
+def sanitized_csv_slots(models: list[str]) -> list[dict[str, Any]]:
+    return [{"slot": index, "model": model} for index, model in enumerate(models)]
+
+
+def sanitized_local_specs(specs: list[tuple[str, str, str]]) -> list[dict[str, str]]:
+    return [
+        {"slot": index, "name": name, "path": path, "device": device}
+        for index, (name, path, device) in enumerate(specs)
+    ]
+
+
 class LocalPoolWorker:
-    """Worker pool of local multi-vendor models. The Coordinator calls
-    (role_name, messages, agent_id) -> reply; we dispatch to model[agent_id].
-    Solver replies are nudged to include <think>…</think> so the Coordinator can
-    extract a thought into the router obs (matching _get_obs)."""
-    def __init__(self, specs, max_new=384):
+    """Local HF worker pool with the same protocol as the serving worker."""
+
+    def __init__(self, specs: list[tuple[str, str, str]], max_new: int = 384):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        if not specs:
+            raise ValueError("--local-models did not contain any model paths")
         self.torch, self.max_new = torch, max_new
         self.names, self.toks, self.models, self.devs = [], [], [], []
         for name, path, dev in specs:
@@ -52,102 +141,231 @@ class LocalPoolWorker:
             if tk.pad_token is None:
                 tk.pad_token = tk.eos_token
             try:
-                m = AutoModelForCausalLM.from_pretrained(path, dtype=torch.bfloat16).to(dev).eval()
+                model = AutoModelForCausalLM.from_pretrained(path, dtype=torch.bfloat16).to(dev).eval()
             except TypeError:
-                m = AutoModelForCausalLM.from_pretrained(path, torch_dtype=torch.bfloat16).to(dev).eval()
-            self.names.append(name); self.toks.append(tk); self.models.append(m); self.devs.append(dev)
-        self.cache = {}
+                model = AutoModelForCausalLM.from_pretrained(path, torch_dtype=torch.bfloat16).to(dev).eval()
+            self.names.append(name)
+            self.toks.append(tk)
+            self.models.append(model)
+            self.devs.append(dev)
 
-    def __call__(self, role_name, messages, agent_id):
-        wid = agent_id % len(self.models)
-        key = (wid, role_name, messages[-1]["content"][:200])
-        if key in self.cache:
-            return self.cache[key]
+    def __call__(self, role_name: str, messages: list[dict[str, str]], agent_id: int) -> str:
         torch = self.torch
-        tk, model, dev = self.toks[wid], self.models[wid], self.devs[wid]
+        wid = agent_id % len(self.models)
+        tok, model, dev = self.toks[wid], self.models[wid], self.devs[wid]
         try:
-            text = tk.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            text = tok.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         except Exception:
-            text = "\n".join(m["content"] for m in messages)
-        ids = tk(text, return_tensors="pt", truncation=True, max_length=2048).to(dev)
+            text = "\n".join(message["content"] for message in messages)
+        ids = tok(text, return_tensors="pt", truncation=True, max_length=2048).to(dev)
         with torch.no_grad():
-            out = model.generate(**ids, max_new_tokens=self.max_new, do_sample=False,
-                                 pad_token_id=tk.pad_token_id)
-        reply = tk.decode(out[0, ids["input_ids"].shape[1]:], skip_special_tokens=True)
-        self.cache[key] = reply
-        return reply
+            out = model.generate(
+                **ids,
+                max_new_tokens=self.max_new,
+                do_sample=False,
+                pad_token_id=tok.pad_token_id,
+            )
+        return tok.decode(out[0, ids["input_ids"].shape[1]:], skip_special_tokens=True)
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Per-step TRINITY router training (real rollout fitness).")
+class CachedWorker:
+    """Memoize deterministic worker calls across CMA candidates."""
+
+    def __init__(self, worker, n_slots: int):
+        self.worker = worker
+        self.n_slots = n_slots
+        self.cache: dict[tuple[int, str, str], str] = {}
+
+    def __call__(self, role_name: str, messages: list[dict[str, str]], agent_id: int) -> str:
+        slot = agent_id % self.n_slots
+        key = (slot, role_name, json.dumps(messages, sort_keys=True, ensure_ascii=False))
+        if key not in self.cache:
+            self.cache[key] = self.worker(role_name, messages, agent_id)
+        return self.cache[key]
+
+
+@dataclass(frozen=True)
+class WorkerBuild:
+    worker: Any
+    labels: list[str]
+    source: str
+    slots: list[dict[str, Any]]
+
+
+def build_worker(args: argparse.Namespace) -> WorkerBuild:
+    if args.local_models:
+        local_specs = parse_local_specs(args.local_models)
+        worker = LocalPoolWorker(local_specs, max_new=args.max_tokens)
+        labels = [name for name, _, _ in local_specs]
+        return WorkerBuild(
+            CachedWorker(worker, len(labels)),
+            labels,
+            "local_models",
+            sanitized_local_specs(local_specs),
+        )
+
+    specs = load_slot_specs(args.slot_config, args.slot_config_env, min_count=1, max_count=N_AGENTS)
+    slots = [item.strip() for item in (args.slot_models or "").split(",") if item.strip()]
+    if specs:
+        worker = LiteLLMWorker(slot_specs=specs, max_tokens=args.max_tokens, temperature=args.temperature)
+        labels = slot_labels(specs)
+        source = "slot_config"
+        slot_rows = sanitized_slot_specs(specs)
+    elif slots:
+        worker = LiteLLMWorker(slot_models=slots, max_tokens=args.max_tokens, temperature=args.temperature)
+        labels = slots
+        source = "slot_models"
+        slot_rows = sanitized_csv_slots(slots)
+    else:
+        raise ValueError("provide LiteLLM slots via --slot-config-env/--slot-config/--slot-models, or --local-models")
+
+    if len(labels) > N_AGENTS:
+        raise ValueError(f"TRINITY supports at most {N_AGENTS} worker slots, got {len(labels)}")
+    return WorkerBuild(CachedWorker(worker, len(labels)), labels, source, slot_rows)
+
+
+def load_gsm8k_tasks(n_train: int) -> list[tuple[str, str]]:
+    from datasets import load_dataset
+
+    ds = load_dataset("openai/gsm8k", "main", split=f"train[:{n_train}]")
+    tasks = [(row["question"], gold_answer(row["answer"])) for row in ds]
+    if not tasks:
+        raise ValueError("--n-train selected zero tasks")
+    return tasks
+
+
+def write_sidecar_json(
+    out: Path,
+    args: argparse.Namespace,
+    worker_build: WorkerBuild,
+    vector: str,
+    base_fit: float,
+    best_fit: float,
+    head_size: int,
+) -> Path:
+    sidecar = out.with_suffix(".json")
+    data = {
+        "head_file": str(out),
+        "head_floats": head_size,
+        "router_model": args.router_model,
+        "base_vector": vector,
+        "worker_source": worker_build.source,
+        "slot_count": len(worker_build.labels),
+        "slots": worker_build.slots,
+        "training": {
+            "dataset": "openai/gsm8k train",
+            "n_train": args.n_train,
+            "iters": args.iters,
+            "max_turns": args.max_turns,
+            "sigma0": args.sigma0,
+            "max_tokens": args.max_tokens,
+            "temperature": args.temperature,
+            "seed": args.seed,
+            "diagonal_cma": not args.no_diagonal,
+        },
+        "result": {
+            "base_solved": base_fit,
+            "best_solved": best_fit,
+            "delta": best_fit - base_fit,
+        },
+        "notes": [
+            "API keys are intentionally not stored in this sidecar.",
+            "If slot_count is less than 7, TRINITY agent_id maps to slot by agent_id % slot_count.",
+        ],
+    }
+    sidecar.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return sidecar
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description="Train a serving-compatible per-step TRINITY head.")
     ap.add_argument("--router-model", default=os.environ.get("FUGU_MODEL", "Qwen/Qwen3-0.6B"))
-    ap.add_argument("--vector", default="/root/model_iter_60.npy",
-                    help="base vector; SVF part applied & frozen, head is what we train")
+    ap.add_argument("--router-device", default="auto", help="auto, cpu, cuda:0, ...")
+    ap.add_argument(
+        "--vector",
+        default=str(DEFAULT_VECTOR),
+        help="base 19456-float vector; created as identity if missing",
+    )
+    ap.add_argument("--slot-models", metavar="CSV", help="LiteLLM model ids; max 7")
+    ap.add_argument("--slot-config", metavar="JSON", help="JSON file with LiteLLM slot configs; max 7")
+    ap.add_argument("--slot-config-env", metavar="ENV", help="env var containing LiteLLM slot configs JSON")
+    ap.add_argument("--local-models", metavar="CSV", help="local HF worker paths, optionally path@device")
     ap.add_argument("--n-train", type=int, default=8)
     ap.add_argument("--iters", type=int, default=6)
     ap.add_argument("--max-turns", type=int, default=4)
     ap.add_argument("--sigma0", type=float, default=0.3)
+    ap.add_argument("--max-tokens", type=int, default=384)
+    ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--out", default="trinity_perstep.npy")
-    args = ap.parse_args()
+    ap.add_argument("--no-diagonal", action="store_true", help="use full CMA instead of sep-CMA")
+    ap.add_argument("--out", default=str(DEFAULT_HEAD))
+    args = ap.parse_args(argv)
 
     import cma
-    from datasets import load_dataset
-
-    HUB = "/vePFS-Mindverse/share/huggingface/hub"
-    def snap(repo):
-        g = glob.glob(f"{HUB}/{repo}/snapshots/*/")
-        return g[0] if g else None
-    POOL = [(n, snap(r), d) for n, r, d in [
-        ("deepseek-distill-7b", "models--deepseek-ai--DeepSeek-R1-Distill-Qwen-7B", "cuda:1"),
-        ("llama-3.2-3b",        "models--meta-llama--Llama-3.2-3B-Instruct",        "cuda:2"),
-        ("gemma-3-4b",          "models--google--gemma-3-4b-it",                    "cuda:3"),
-    ] if snap(r)]
-    print(f"[perstep] worker pool: {[n for n,_,_ in POOL]}", flush=True)
-
-    ds = load_dataset("openai/gsm8k", "main", split=f"train[:{args.n_train}]")
-    tasks = [(r["question"], r["answer"].split("####")[-1].strip().replace(",", "")) for r in ds]
-
-    # router on cuda:0; load base vector, keep SVF applied (frozen), train the head
-    router = FuguRouter(args.router_model, args.vector, device="cuda:0", seed=args.seed)
-    base_head = router.head.clone()
-    pool = LocalPoolWorker(POOL)
     import torch
-    HEAD_DIM = HEAD_ROWS * HIDDEN
 
-    def rollout_solved(head_vec):
+    vector = ensure_base_vector(args.vector)
+    worker, labels = build_worker(args)
+    print(f"[perstep] worker slots ({len(labels)}): {labels}", flush=True)
+
+    tasks = load_gsm8k_tasks(args.n_train)
+    print(f"[perstep] loaded GSM8K train tasks: {len(tasks)}", flush=True)
+
+    device = resolve_router_device(args.router_device)
+    router = FuguRouter(args.router_model, vector, device=device, seed=args.seed)
+    base_head = router.head.detach().cpu().numpy().ravel()
+    head_dim = HEAD_ROWS * HIDDEN
+    if base_head.shape != (head_dim,):
+        raise ValueError(f"base head must be {head_dim} floats, got {base_head.shape}")
+
+    def rollout_solved(head_vec: np.ndarray) -> float:
         router.head = torch.from_numpy(head_vec.copy()).float().reshape(HEAD_ROWS, HIDDEN).to(router.device)
-        coord = Coordinator(router, pool, max_turns=args.max_turns, sample=False)
+        coord = Coordinator(router, worker, max_turns=args.max_turns, sample=False)
         solved = 0
-        for q, gold in tasks:
-            res = coord.run(q)
-            if numeric_answer(res.final) == gold:
+        for question, gold in tasks:
+            result = coord.run(question)
+            if numeric_answer(result.final) == gold:
                 solved += 1
         return solved / len(tasks)
 
-    base_fit = rollout_solved(base_head.cpu().numpy().ravel())
-    print(f"[perstep] base head rollout solved={base_fit:.3f}  (n={len(tasks)}, max_turns={args.max_turns})", flush=True)
+    base_fit = rollout_solved(base_head)
+    print(
+        f"[perstep] base rollout solved={base_fit:.3f} "
+        f"(n={len(tasks)}, max_turns={args.max_turns})",
+        flush=True,
+    )
 
-    es = cma.CMAEvolutionStrategy(base_head.cpu().numpy().ravel(), args.sigma0,
-                                  {"seed": args.seed, "verbose": -9, "CMA_diagonal": True})
-    best_vec, best_fit = base_head.cpu().numpy().ravel(), base_fit
-    for it in range(args.iters):
-        cands = es.ask()
-        fits = [rollout_solved(c) for c in cands]
-        es.tell(cands, [-f for f in fits])
-        i = int(np.argmax(fits))
-        if fits[i] > best_fit:
-            best_fit, best_vec = fits[i], cands[i].copy()
-        print(f"[iter {it}] best_solved={best_fit:.3f} (base {base_fit:.3f})", flush=True)
+    opts = {"seed": args.seed, "verbose": -9}
+    if not args.no_diagonal:
+        opts["CMA_diagonal"] = True
+    es = cma.CMAEvolutionStrategy(base_head, args.sigma0, opts)
+    best_vec, best_fit = base_head, base_fit
 
-    np.save(args.out, best_vec)
+    for iteration in range(args.iters):
+        candidates = es.ask()
+        fits = [rollout_solved(np.asarray(candidate)) for candidate in candidates]
+        es.tell(candidates, [-fit for fit in fits])
+        best_index = int(np.argmax(fits))
+        if fits[best_index] > best_fit:
+            best_fit = float(fits[best_index])
+            best_vec = np.asarray(candidates[best_index]).copy()
+        print(
+            f"[iter {iteration}] best_solved={best_fit:.3f} "
+            f"(base {base_fit:.3f}, cache={len(worker.cache)})",
+            flush=True,
+        )
+
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    np.save(out, best_vec)
     print(f"\n[result] per-step trained head solved={best_fit:.3f} vs base {base_fit:.3f}")
-    print(f"[result] saved {args.out}")
+    print(f"[result] saved {out} ({best_vec.shape[0]} floats)")
     if best_fit > base_fit + 0.01:
-        print("PASS — per-step sep-CMA improved the router over the multi-turn rollout")
+        print("PASS — per-step sep-CMA improved the router over the rollout baseline")
     else:
-        print(f"NOTE — no improvement over base in {args.iters} iters (small scale / saturated)")
+        print("NOTE — no improvement over base in this small run; increase --n-train/--iters for a stronger search")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

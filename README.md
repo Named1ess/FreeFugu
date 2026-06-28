@@ -26,6 +26,18 @@ endpoint. Four stages, all working: **read → run → train → serve.**
 
 ## Quickstart
 
+### Local Web UI
+
+For a browser-based control panel over the existing scripts:
+
+```bash
+python webui/app.py
+```
+
+Open `http://127.0.0.1:7860/`. The page can install dependencies, fetch
+artifacts, run TRINITY/Fugu-Ultra demos, start the OpenAI-compatible server,
+launch training/eval jobs, stream logs, and cancel running jobs.
+
 ```bash
 pip install -r requirements.txt           # torch, transformers, trl, litellm, ...
 python scripts/fetch_artifacts.py         # pull Qwen3-0.6B + model_iter_60.npy + fixture (not redistributed)

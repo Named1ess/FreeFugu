@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>OpenFugu 控制台</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">F</div>
+        <div>
+          <h1>OpenFugu</h1>
+          <p>本地控制台</p>
+        </div>
+      </div>
+      <div class="rail-label">MODULES</div>
+      <nav id="groupNav" class="group-nav"></nav>
+      <section class="status-panel">
+        <div class="section-head">
+          <h2>环境</h2>
+          <button id="refreshStatus" class="icon-button" type="button" title="刷新">↻</button>
+        </div>
+        <div id="statusList" class="status-list"></div>
+      </section>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">LOCAL PYTHON WORKBENCH</p>
+          <h2>OpenFugu 一键控制台</h2>
+        </div>
+        <div class="top-stats" aria-label="控制台状态">
+          <span>12 OPS</span>
+          <span>127.0.0.1</span>
+          <span>JOB RUNNER</span>
+        </div>
+        <div class="search-wrap">
+          <input id="searchInput" type="search" placeholder="筛选操作" />
+        </div>
+      </header>
+
+      <section class="console-layout">
+        <section class="operations-pane">
+          <div class="pane-title">
+            <span>OPERATION MATRIX</span>
+            <strong>选择一个现有能力执行</strong>
+          </div>
+          <section id="operationGrid" class="operation-grid" aria-live="polite"></section>
+        </section>
+
+        <aside class="observer" aria-label="任务观察区">
+          <section class="history-panel">
+            <div class="section-head">
+              <h2>最近任务</h2>
+              <button id="refreshJobs" class="icon-button" type="button" title="刷新">↻</button>
+            </div>
+            <div id="jobHistory" class="job-history"></div>
+          </section>
+
+          <section class="job-panel">
+            <div class="section-head">
+              <h2>任务日志</h2>
+              <div class="job-actions">
+                <button id="cancelJob" class="secondary danger" type="button" disabled>取消</button>
+                <button id="clearSelection" class="secondary" type="button">清空</button>
+              </div>
+            </div>
+            <div id="jobMeta" class="job-meta">暂无任务</div>
+            <pre id="logOutput" class="log-output"></pre>
+          </section>
+
+          <section class="chat-panel">
+            <div class="section-head">
+              <h2>服务测试</h2>
+              <span class="pill">/v1/chat/completions</span>
+            </div>
+            <label class="field compact">
+              <span>端口</span>
+              <input id="chatPort" type="number" value="8088" />
+            </label>
+            <label class="field">
+              <span>消息</span>
+              <textarea id="chatMessage" rows="5">flatten a nested list in one line</textarea>
+            </label>
+            <button id="sendChat" class="primary full" type="button">发送请求</button>
+            <pre id="chatOutput" class="mini-output"></pre>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
