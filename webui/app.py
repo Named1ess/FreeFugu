@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Web UI for OpenFugu.
+"""Local Web UI for FreeFugu.
 
 The server intentionally uses only the Python standard library. It exposes a
 small whitelist of existing repository scripts, runs them as background jobs,
@@ -1333,7 +1333,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description="OpenFugu local Web UI")
+    ap = argparse.ArgumentParser(description="FreeFugu local Web UI")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=7860)
     ap.add_argument("--no-browser", action="store_true")
@@ -1345,7 +1345,7 @@ def main(argv: list[str] | None = None) -> int:
 
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     url = f"http://{args.host}:{args.port}/"
-    print(f"[webui] OpenFugu Web UI: {url}")
+    print(f"[webui] FreeFugu Web UI: {url}")
     print(f"[webui] repo root: {ROOT}")
     if not args.no_browser:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
