@@ -24,6 +24,8 @@ handles its tool-call structure best.
 """
 from __future__ import annotations
 import argparse, json, os, sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Lock
 import numpy as np
 
 HIDDEN = 1024
@@ -74,6 +76,12 @@ def route(head_vec, feat, n_workers):
     return int(np.argmax(W @ feat))
 
 
+def worker_parallelism(requested: int, n_workers: int) -> int:
+    if requested <= 0:
+        return max(1, n_workers)
+    return max(1, min(requested, n_workers))
+
+
 def main():
     ap = argparse.ArgumentParser(description="TRINITY router training on ToolScale.")
     ap.add_argument("--model", default=os.environ.get("FUGU_MODEL", "Qwen/Qwen3-0.6B"))
@@ -82,6 +90,8 @@ def main():
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--sigma0", type=float, default=0.5)
     ap.add_argument("--max-tokens", type=int, default=1024)
+    ap.add_argument("--worker-parallelism", type=int, default=0,
+                    help="parallel worker slots for per-worker baselines; 0 = all workers")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--out", default="trinity_toolscale.npy")
     args = ap.parse_args()
@@ -118,10 +128,15 @@ def main():
     print(f"[toolscale-train] cached {len(feats)} real Qwen3-0.6B features", flush=True)
 
     solve_cache: dict = {}
+    solve_cache_lock = Lock()
+    missing = object()
+
     def worker_score(wid, q, gold):
         key = (wid, q)
-        if key in solve_cache:
-            return solve_cache[key]
+        with solve_cache_lock:
+            cached = solve_cache.get(key, missing)
+        if cached is not missing:
+            return cached
         try:
             spec = SlotSpec(model=workers[wid])
             out = completion_content(
@@ -138,14 +153,28 @@ def main():
         except Exception as e:
             print(f"   [warn] worker {wid} failed: {str(e)[:60]}", flush=True)
             s = 0.0
-        solve_cache[key] = s
+        with solve_cache_lock:
+            solve_cache[key] = s
         return s
 
     def fitness(head_vec):
         return float(np.mean([worker_score(route(head_vec, f, n_workers), q, g)
                               for (q, g), f in zip(tasks, feats)]))
 
-    per_worker = [np.mean([worker_score(w, q, g) for q, g in tasks]) for w in range(n_workers)]
+    per_worker = [0.0] * n_workers
+
+    def score_worker(wid):
+        return float(np.mean([worker_score(wid, q, g) for q, g in tasks]))
+
+    parallelism = worker_parallelism(args.worker_parallelism, n_workers)
+    if parallelism == 1:
+        for w in range(n_workers):
+            per_worker[w] = score_worker(w)
+    else:
+        with ThreadPoolExecutor(max_workers=parallelism) as executor:
+            futures = {executor.submit(score_worker, w): w for w in range(n_workers)}
+            for future in as_completed(futures):
+                per_worker[futures[future]] = future.result()
     best_single = max(per_worker)
     print("[baseline] per-worker action-score: " +
           ", ".join(f"{workers[w].split('/')[-1]}={per_worker[w]:.3f}" for w in range(n_workers)), flush=True)

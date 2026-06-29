@@ -8,6 +8,7 @@ import ssl
 import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -254,6 +255,7 @@ def completion_content(
     temperature: float = 0.2,
     timeout: float | None = None,
     label: str | None = None,
+    max_retries: int | None = None,
 ) -> str:
     credentials = litellm_credentials(spec, api_key=api_key, api_base=api_base)
     base = credentials.get("api_base")
@@ -284,7 +286,7 @@ def completion_content(
         kwargs.update(credentials)
         return litellm.completion(**kwargs).choices[0].message.content or ""
 
-    return _retry_forever(_call, label=tag)
+    return _retry_forever(_call, label=tag, max_retries=max_retries)
 
 
 def describe_api_format(model: str, api_base: str | None = None) -> str:
@@ -346,6 +348,19 @@ def connectivity_check_enabled() -> bool:
     return value not in {"1", "true", "yes", "on"}
 
 
+def _connectivity_parallelism(n_checks: int) -> int:
+    raw = os.environ.get("FUGU_CONNECTIVITY_PARALLELISM", "").strip()
+    if not raw:
+        return max(1, n_checks)
+    try:
+        requested = int(raw)
+    except ValueError:
+        return max(1, n_checks)
+    if requested <= 0:
+        return max(1, n_checks)
+    return max(1, min(requested, n_checks))
+
+
 def check_litellm_connectivity(
     specs: Iterable[SlotSpec],
     *,
@@ -364,6 +379,7 @@ def check_litellm_connectivity(
 
     print(f"[preflight] checking {label} connectivity ({len(specs)} slot(s)) ...", flush=True)
     seen: set[tuple[str, str, bool, str]] = set()
+    checks: list[tuple[int, SlotSpec, dict[str, str], str | None, str]] = []
     for index, spec in enumerate(specs):
         credentials = litellm_credentials(spec, api_key=api_key, api_base=api_base)
         base = credentials.get("api_base")
@@ -377,6 +393,10 @@ def check_litellm_connectivity(
                 f"slot {index} ({spec.model}) API URL looks like a full endpoint: "
                 f"{_safe_url(base)}. {describe_api_format(spec.model, base)}"
             )
+        checks.append((index, spec, credentials, base, backend))
+
+    def _check_one(item: tuple[int, SlotSpec, dict[str, str], str | None, str]):
+        index, spec, credentials, base, backend = item
 
         try:
             completion_content(
@@ -387,6 +407,7 @@ def check_litellm_connectivity(
                 max_tokens=2,
                 temperature=0,
                 timeout=timeout,
+                max_retries=0,
             )
         except Exception as exc:
             if _looks_like_auth_error(exc):
@@ -404,6 +425,20 @@ def check_litellm_connectivity(
                 f"{describe_api_format(spec.model, base)} "
                 f"Original error: {type(exc).__name__}: {exc}"
             ) from exc
+        return index, spec, backend, base
+
+    results = []
+    parallelism = _connectivity_parallelism(len(checks))
+    if parallelism == 1:
+        for item in checks:
+            results.append(_check_one(item))
+    else:
+        with ThreadPoolExecutor(max_workers=parallelism) as executor:
+            futures = {executor.submit(_check_one, item): item[0] for item in checks}
+            for future in as_completed(futures):
+                results.append(future.result())
+
+    for index, spec, backend, base in sorted(results, key=lambda item: item[0]):
         print(
             f"[preflight] ok slot {index}: {spec.label or spec.model} "
             f"model={spec.model} backend={backend} "

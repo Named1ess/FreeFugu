@@ -530,6 +530,7 @@ OPERATIONS: list[dict[str, Any]] = [
                 "placeholder": "pathA@cuda:1,pathB@cuda:2",
             },
             {"name": "n_tasks", "label": "评测题数", "type": "number", "flag": "--n-tasks", "default": "16"},
+            {"name": "worker_parallelism", "label": "worker 并行数", "type": "number", "flag": "--worker-parallelism", "default": "0"},
             {"name": "skip", "label": "测试集偏移", "type": "number", "flag": "--skip", "default": "0"},
             {"name": "max_turns", "label": "最大轮数", "type": "number", "flag": "--max-turns", "default": "4"},
             {"name": "seed", "label": "随机种子", "type": "number", "flag": "--seed", "default": "42"},

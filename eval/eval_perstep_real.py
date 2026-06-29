@@ -25,6 +25,7 @@ import faulthandler
 import os
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -72,14 +73,50 @@ def load_gsm8k_test_tasks(n_tasks: int, skip: int = 0) -> list[tuple[str, str]]:
 def run_single_worker(worker, slot_index: int, tasks: list[tuple[str, str]],
                       max_tokens: int) -> tuple[int, int]:
     """Every question -> one fixed worker, single-shot (no TRINITY loop)."""
-    solved = 0
+    scores = run_single_worker_scores(worker, slot_index, tasks, max_tokens)
+    return sum(scores), len(scores)
+
+
+def run_single_worker_scores(worker, slot_index: int, tasks: list[tuple[str, str]],
+                             max_tokens: int) -> list[bool]:
+    """Every question -> one fixed worker, preserving per-worker question order."""
+    scores = []
     msgs_template = [{"role": "system", "content": SYSTEM_PROMPT}]
     for question, gold in tasks:
         msgs = msgs_template + [{"role": "user", "content": question}]
         reply = worker("Worker", msgs, slot_index)
-        if numeric_answer(reply) == gold:
-            solved += 1
-    return solved, len(tasks)
+        ok = numeric_answer(reply) == gold
+        scores.append(ok)
+    return scores
+
+
+def _worker_parallelism(requested: int, n_slots: int) -> int:
+    if requested <= 0:
+        return max(1, n_slots)
+    return max(1, min(requested, n_slots))
+
+
+def run_single_workers_parallel(worker, n_slots: int, tasks: list[tuple[str, str]],
+                                max_tokens: int, max_workers: int) -> list[list[bool]]:
+    """Run worker slots in parallel; each slot still walks tasks sequentially."""
+    parallelism = _worker_parallelism(max_workers, n_slots)
+    scores_by_slot: list[list[bool] | None] = [None] * n_slots
+    if parallelism == 1:
+        for slot in range(n_slots):
+            scores_by_slot[slot] = run_single_worker_scores(worker, slot, tasks, max_tokens)
+    else:
+        with ThreadPoolExecutor(max_workers=parallelism) as executor:
+            futures = {
+                executor.submit(run_single_worker_scores, worker, slot, tasks, max_tokens): slot
+                for slot in range(n_slots)
+            }
+            for future in as_completed(futures):
+                slot = futures[future]
+                scores_by_slot[slot] = future.result()
+    missing = [slot for slot, scores in enumerate(scores_by_slot) if scores is None]
+    if missing:
+        raise RuntimeError(f"missing single-worker results for slots: {missing}")
+    return [scores for scores in scores_by_slot if scores is not None]
 
 
 def run_coordinator(router, worker, tasks: list[tuple[str, str]],
@@ -112,6 +149,15 @@ def run_oracle(worker, n_slots: int, tasks: list[tuple[str, str]],
     return solved, len(tasks)
 
 
+def run_oracle_from_worker_scores(scores_by_slot: list[list[bool]]) -> tuple[int, int]:
+    """Ceiling from already-collected per-worker answers."""
+    if not scores_by_slot:
+        return 0, 0
+    total = len(scores_by_slot[0])
+    solved = sum(any(slot_scores[i] for slot_scores in scores_by_slot) for i in range(total))
+    return solved, total
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         description="Evaluate trained per-step head vs single workers on held-out GSM8K."
@@ -133,6 +179,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="offset into GSM8K test split (default 0)")
     ap.add_argument("--max-turns", type=int, default=4, help="coordinator max_turns")
     ap.add_argument("--max-tokens", type=int, default=384)
+    ap.add_argument("--worker-parallelism", type=int, default=0,
+                    help="parallel worker slots for single-worker/oracle baselines; 0 = all slots")
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--no-oracle", action="store_true", help="skip oracle (saves API calls)")
@@ -164,8 +212,15 @@ def main(argv: list[str] | None = None) -> int:
 
     print("\n[eval] === strategy 1: each worker ALONE (single-shot) ===", flush=True)
     single_results: list[tuple[str, float]] = []
+    scores_by_slot = run_single_workers_parallel(
+        worker,
+        n_slots,
+        tasks,
+        args.max_tokens,
+        args.worker_parallelism,
+    )
     for slot in range(n_slots):
-        solved, total = run_single_worker(worker, slot, tasks, args.max_tokens)
+        solved, total = sum(scores_by_slot[slot]), len(scores_by_slot[slot])
         rate = solved / total
         single_results.append((labels[slot], rate))
         print(f"  {labels[slot]:30s} alone: {rate:.3f}  ({solved}/{total})", flush=True)
@@ -180,7 +235,7 @@ def main(argv: list[str] | None = None) -> int:
     oracle_rate: float | None = None
     if not args.no_oracle:
         print("\n[eval] === strategy 3: oracle (try all, take best) ===", flush=True)
-        oracle_solved, oracle_total = run_oracle(worker, n_slots, tasks, args.max_tokens)
+        oracle_solved, oracle_total = run_oracle_from_worker_scores(scores_by_slot)
         oracle_rate = oracle_solved / oracle_total
         print(f"  oracle                        : {oracle_rate:.3f}  ({oracle_solved}/{oracle_total})", flush=True)
 
