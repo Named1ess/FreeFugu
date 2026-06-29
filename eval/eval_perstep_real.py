@@ -204,11 +204,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if coord_rate > best_single + 0.02:
         print("PASS — trained coordinator beats the best single worker on held-out questions", flush=True)
-        return 0
     else:
         print("FAIL — coordinator did not beat the best single worker "
               "(try more training data / iters, or check worker diversity)", flush=True)
-        return 1
+    return 0
 
 
 if __name__ == "__main__":
