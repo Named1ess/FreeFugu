@@ -543,18 +543,13 @@ function renderField(op, field) {
     label.append(caption, input);
   }
 
-  // show_if: hide this field until the controlling checkbox is checked
+  // show_if: hidden by default. The real visibility (initial + on change) is
+  // synced in renderOperationDetail once the controller and its dependents are
+  // mounted together in the same container.
   if (field.show_if) {
     label.classList.add("conditional-field");
     label.dataset.showIf = field.show_if;
-    const controller = document.querySelector(`[data-operation="${op.id}"][name="${field.show_if}"]`);
-    const syncVisibility = () => {
-      const ctrl = document.querySelector(`[data-operation="${op.id}"][name="${field.show_if}"]`);
-      if (!ctrl) return;
-      label.hidden = ctrl.type === "checkbox" ? !ctrl.checked : !ctrl.value;
-    };
-    syncVisibility();
-    // re-sync when the controller checkbox toggles (wired after render in renderOperationDetail)
+    label.hidden = true;
   }
 
   input.addEventListener("change", () => {
@@ -677,19 +672,21 @@ function renderOperationDetail() {
   (op.fields || []).forEach((field) => fields.append(renderField(op, field)));
   body.append(fields);
 
-  // wire show_if controllers: when a checkbox toggles, show/hide dependent fields
-  const conditionalFields = fields.querySelectorAll(".conditional-field");
+  // wire show_if controllers: show/hide dependent fields based on the controller.
+  // Use a real array (NodeList has no .filter) and run syncAll() once immediately
+  // so the initial visibility is correct, not just on later change events.
+  const conditionalFields = [...fields.querySelectorAll(".conditional-field")];
   if (conditionalFields.length) {
-    const controllerNames = [...new Set([...conditionalFields].map((f) => f.dataset.showIf))];
+    const controllerNames = [...new Set(conditionalFields.map((f) => f.dataset.showIf))];
     controllerNames.forEach((ctrlName) => {
       const ctrlInput = fields.querySelector(`[name="${ctrlName}"]`);
       if (!ctrlInput) return;
+      const dependents = conditionalFields.filter((f) => f.dataset.showIf === ctrlName);
       const syncAll = () => {
         const checked = ctrlInput.type === "checkbox" ? ctrlInput.checked : Boolean(ctrlInput.value);
-        conditionalFields
-          .filter((f) => f.dataset.showIf === ctrlName)
-          .forEach((f) => { f.hidden = !checked; });
+        dependents.forEach((f) => { f.hidden = !checked; });
       };
+      syncAll();
       ctrlInput.addEventListener("change", syncAll);
     });
   }

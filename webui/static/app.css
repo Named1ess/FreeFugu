@@ -601,6 +601,12 @@ button:disabled {
   accent-color: var(--cyan);
 }
 
+/* conditional (show_if) fields toggle via the [hidden] attribute; without this
+   rule `.field { display: grid }` would override [hidden] and keep them visible. */
+.field[hidden] {
+  display: none;
+}
+
 .slot-config {
   display: grid;
   gap: 8px;
