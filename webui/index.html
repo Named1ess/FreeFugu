@@ -42,24 +42,24 @@
         </div>
       </header>
 
-      <section class="console-layout">
-        <section class="operations-pane">
+      <section class="workbench-layout">
+        <section class="operation-list-pane">
           <div class="pane-title">
-            <span>OPERATION MATRIX</span>
-            <strong>选择一个现有能力执行</strong>
+            <span>OPERATION INDEX</span>
+            <strong>缩略操作</strong>
           </div>
           <section id="operationGrid" class="operation-grid" aria-live="polite"></section>
         </section>
 
-        <aside class="observer" aria-label="任务观察区">
-          <section class="history-panel">
-            <div class="section-head">
-              <h2>最近任务</h2>
-              <button id="refreshJobs" class="icon-button" type="button" title="刷新">↻</button>
-            </div>
-            <div id="jobHistory" class="job-history"></div>
-          </section>
+        <section class="operation-detail-pane">
+          <div class="pane-title">
+            <span>EXECUTION DETAIL</span>
+            <strong>参数填写</strong>
+          </div>
+          <section id="operationDetail" class="operation-detail" aria-live="polite"></section>
+        </section>
 
+        <section class="monitor-pane" aria-label="任务观察区">
           <section class="job-panel">
             <div class="section-head">
               <h2>任务日志</h2>
@@ -73,23 +73,33 @@
             <pre id="logOutput" class="log-output"></pre>
           </section>
 
-          <section class="chat-panel">
-            <div class="section-head">
-              <h2>服务测试</h2>
-              <span class="pill">/v1/chat/completions</span>
-            </div>
-            <label class="field compact">
-              <span>端口</span>
-              <input id="chatPort" type="number" value="8088" />
-            </label>
-            <label class="field">
-              <span>消息</span>
-              <textarea id="chatMessage" rows="5">flatten a nested list in one line</textarea>
-            </label>
-            <button id="sendChat" class="primary full" type="button">发送请求</button>
-            <pre id="chatOutput" class="mini-output"></pre>
-          </section>
-        </aside>
+          <div class="monitor-side">
+            <section class="history-panel">
+              <div class="section-head">
+                <h2>最近任务</h2>
+                <button id="refreshJobs" class="icon-button" type="button" title="刷新">↻</button>
+              </div>
+              <div id="jobHistory" class="job-history"></div>
+            </section>
+
+            <section class="chat-panel">
+              <div class="section-head">
+                <h2>服务测试</h2>
+                <span class="pill">/v1/chat/completions</span>
+              </div>
+              <label class="field compact">
+                <span>端口</span>
+                <input id="chatPort" type="number" value="8088" />
+              </label>
+              <label class="field">
+                <span>消息</span>
+                <textarea id="chatMessage" rows="4">flatten a nested list in one line</textarea>
+              </label>
+              <button id="sendChat" class="primary full" type="button">发送请求</button>
+              <pre id="chatOutput" class="mini-output"></pre>
+            </section>
+          </div>
+        </section>
       </section>
     </main>
 

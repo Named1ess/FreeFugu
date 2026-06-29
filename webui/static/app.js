@@ -4,6 +4,7 @@ const state = {
   status: null,
   jobs: [],
   activeGroup: "all",
+  activeOperationId: null,
   activeJobId: null,
   renderedJobId: null,
   search: "",
@@ -165,6 +166,7 @@ function renderGroups() {
       state.activeGroup = group.id;
       renderGroups();
       renderOperations();
+      renderOperationDetail();
     });
     nav.append(button);
   });
@@ -455,15 +457,31 @@ function collectValues(card) {
   return values;
 }
 
-function renderOperations() {
-  const grid = $("#operationGrid");
-  grid.replaceChildren();
+function filteredOperations() {
   const query = state.search.trim().toLowerCase();
-  const operations = state.operations.filter((op) => {
+  return state.operations.filter((op) => {
     const groupOk = state.activeGroup === "all" || op.group === state.activeGroup;
     const text = `${op.title} ${op.description} ${op.badge}`.toLowerCase();
     return groupOk && (!query || text.includes(query));
   });
+}
+
+function ensureActiveOperation(operations) {
+  if (!operations.length) {
+    state.activeOperationId = null;
+    return null;
+  }
+  const active = operations.find((op) => op.id === state.activeOperationId);
+  if (active) return active;
+  state.activeOperationId = operations[0].id;
+  return operations[0];
+}
+
+function renderOperations() {
+  const grid = $("#operationGrid");
+  grid.replaceChildren();
+  const operations = filteredOperations();
+  const active = ensureActiveOperation(operations);
 
   if (!operations.length) {
     grid.append(el("div", "empty", "没有匹配操作"));
@@ -471,46 +489,84 @@ function renderOperations() {
   }
 
   operations.forEach((op) => {
-    const card = el("article", "operation-card");
-    if ((op.fields || []).some((field) => field.type === "slot_config")) {
-      card.classList.add("wide-card");
-    }
-    card.dataset.group = op.group;
-    card.dataset.operationId = op.id;
-    const head = el("div", "card-head");
+    const item = el("button", `operation-mini ${active?.id === op.id ? "active" : ""}`);
+    item.type = "button";
+    item.dataset.group = op.group;
+    item.dataset.operationId = op.id;
+    const head = el("div", "mini-head");
     const titleWrap = el("div");
-    titleWrap.append(el("h3", "", op.title));
+    titleWrap.append(el("strong", "", op.title));
+    titleWrap.append(el("small", "", op.description || ""));
     head.append(titleWrap, el("span", "badge", op.badge || op.group));
-    card.append(head, el("p", "", op.description || ""));
-
-    const fields = el("div", "field-grid");
-    (op.fields || []).forEach((field) => fields.append(renderField(op, field)));
-    card.append(fields);
-
-    const button = el("button", "primary full", op.long_running ? "启动" : "运行");
-    button.type = "button";
-    button.addEventListener("click", async () => {
-      button.disabled = true;
-      const oldText = button.textContent;
-      button.textContent = "提交中";
-      try {
-        const job = await request("/api/jobs", {
-          method: "POST",
-          body: JSON.stringify({ operation_id: op.id, values: collectValues(card) }),
-        });
-        state.activeJobId = job.id;
-        await refreshJobs();
-        await refreshActiveJob();
-      } catch (error) {
-        alert(error.message);
-      } finally {
-        button.disabled = false;
-        button.textContent = oldText;
-      }
+    const meta = el("div", "mini-meta");
+    meta.append(
+      el("span", "", op.group),
+      el("span", "", `${(op.fields || []).length} 项参数`),
+      el("span", "", op.long_running ? "长任务" : "即时任务"),
+    );
+    item.append(head, meta);
+    item.addEventListener("click", () => {
+      state.activeOperationId = op.id;
+      renderOperations();
+      renderOperationDetail();
     });
-    card.append(button);
-    grid.append(card);
+    grid.append(item);
   });
+}
+
+function renderOperationDetail() {
+  const detail = $("#operationDetail");
+  if (!detail) return;
+  detail.replaceChildren();
+
+  const operations = filteredOperations();
+  const op = ensureActiveOperation(operations);
+  if (!op) {
+    detail.append(el("div", "empty", "请选择左侧分类或调整筛选条件"));
+    return;
+  }
+
+  const card = el("article", "operation-detail-card");
+  card.dataset.group = op.group;
+  card.dataset.operationId = op.id;
+
+  const head = el("div", "detail-head");
+  const titleWrap = el("div");
+  titleWrap.append(el("h3", "", op.title));
+  titleWrap.append(el("p", "", op.description || ""));
+  head.append(titleWrap, el("span", "badge", op.badge || op.group));
+
+  const body = el("div", "operation-detail-body");
+  const fields = el("div", "field-grid");
+  (op.fields || []).forEach((field) => fields.append(renderField(op, field)));
+  body.append(fields);
+
+  const actions = el("div", "detail-actions");
+  const button = el("button", "primary full", op.long_running ? "启动" : "运行");
+  button.type = "button";
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    const oldText = button.textContent;
+    button.textContent = "提交中";
+    try {
+      const job = await request("/api/jobs", {
+        method: "POST",
+        body: JSON.stringify({ operation_id: op.id, values: collectValues(card) }),
+      });
+      state.activeJobId = job.id;
+      await refreshJobs();
+      await refreshActiveJob();
+    } catch (error) {
+      alert(error.message);
+    } finally {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
+  });
+  actions.append(button);
+
+  card.append(head, body, actions);
+  detail.append(card);
 }
 
 function renderHistory() {
@@ -596,13 +652,14 @@ async function refreshActiveJob() {
 
 async function sendChat() {
   const output = $("#chatOutput");
+  if (!output) return;
   output.textContent = "请求中...";
   try {
     const data = await request("/api/chat", {
       method: "POST",
       body: JSON.stringify({
-        port: $("#chatPort").value,
-        message: $("#chatMessage").value,
+        port: $("#chatPort")?.value,
+        message: $("#chatMessage")?.value,
       }),
     });
     const content = data?.choices?.[0]?.message?.content || JSON.stringify(data, null, 2);
@@ -618,6 +675,7 @@ async function init() {
   state.operations = opData.operations || [];
   renderGroups();
   renderOperations();
+  renderOperationDetail();
   await Promise.all([refreshStatus(), refreshJobs()]);
   if (state.jobs[0]) {
     state.activeJobId = state.jobs[0].id;
@@ -627,6 +685,7 @@ async function init() {
   $("#searchInput").addEventListener("input", (event) => {
     state.search = event.target.value;
     renderOperations();
+    renderOperationDetail();
   });
   $("#refreshStatus").addEventListener("click", refreshStatus);
   $("#refreshJobs").addEventListener("click", refreshJobs);
@@ -640,7 +699,7 @@ async function init() {
     await refreshJobs();
     await refreshActiveJob();
   });
-  $("#sendChat").addEventListener("click", sendChat);
+  $("#sendChat")?.addEventListener("click", sendChat);
 
   setInterval(async () => {
     await refreshJobs().catch(() => {});
