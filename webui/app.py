@@ -742,6 +742,7 @@ def run_job(job: Job) -> None:
     env.update(job.env)
     env["PYTHONUNBUFFERED"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONFAULTHANDLER"] = "1"
     job.status = "running"
     job.started_at = time.time()
     job.append("$ " + " ".join(job.command) + "\n")
@@ -770,6 +771,8 @@ def run_job(job: Job) -> None:
         else:
             job.exit_code = code
             job.status = "succeeded" if code == 0 else "failed"
+            if code != 0:
+                job.append(f"\n[webui] process exited with code {code} ({code:#x})\n")
     except Exception as exc:  # surfaced in the Web UI log panel
         job.exit_code = -1
         job.status = "failed"

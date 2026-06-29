@@ -15,6 +15,7 @@ when the original model_iter_60.npy artifact is unavailable.
 from __future__ import annotations
 
 import argparse
+import faulthandler
 import json
 import os
 import re
@@ -25,6 +26,7 @@ from typing import Any
 
 import numpy as np
 
+faulthandler.enable()
 
 ROOT = Path(__file__).resolve().parents[1]
 OPENFUGU = ROOT / "openfugu"
@@ -323,10 +325,12 @@ def main(argv: list[str] | None = None) -> int:
     worker, labels = worker_build.worker, worker_build.labels
     print(f"[perstep] worker slots ({len(labels)}): {labels}", flush=True)
 
+    print("[perstep] loading GSM8K tasks ...", flush=True)
     tasks = load_gsm8k_tasks(args.n_train)
     print(f"[perstep] loaded GSM8K train tasks: {len(tasks)}", flush=True)
 
     device = resolve_router_device(args.router_device)
+    print(f"[perstep] loading router model: {args.router_model} device={device or 'cpu'}", flush=True)
     router = FuguRouter(args.router_model, vector, device=device, seed=args.seed)
     base_head = router.head.detach().cpu().numpy().ravel()
     head_dim = HEAD_ROWS * HIDDEN

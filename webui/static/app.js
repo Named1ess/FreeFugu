@@ -5,6 +5,7 @@ const state = {
   jobs: [],
   activeGroup: "all",
   activeJobId: null,
+  renderedJobId: null,
   search: "",
 };
 
@@ -353,14 +354,27 @@ function renderJob(job) {
   if (!job) {
     meta.textContent = "暂无任务";
     log.textContent = "";
+    state.renderedJobId = null;
     cancel.disabled = true;
     return;
   }
 
   const code = job.exit_code === null || job.exit_code === undefined ? "" : ` · exit=${job.exit_code}`;
+  const jobChanged = state.renderedJobId !== job.id;
+  const wasNearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 24;
+  const previousScrollTop = log.scrollTop;
+  const nextLog = (job.logs || []).join("");
+
   meta.textContent = `${job.title} · ${statusLabel(job.status)}${code} · ${job.command.join(" ")}`;
-  log.textContent = (job.logs || []).join("");
-  log.scrollTop = log.scrollHeight;
+  if (jobChanged || log.textContent !== nextLog) {
+    log.textContent = nextLog;
+    if (jobChanged || wasNearBottom) {
+      log.scrollTop = log.scrollHeight;
+    } else {
+      log.scrollTop = previousScrollTop;
+    }
+  }
+  state.renderedJobId = job.id;
   cancel.disabled = !["running", "queued"].includes(job.status);
 }
 
