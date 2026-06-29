@@ -498,16 +498,31 @@ def main(argv: list[str] | None = None) -> int:
         best_vec, best_fit = base_head, base_fit
 
     for iteration in range(start_iter, args.iters):
+        cache_before = len(worker.cache)
         candidates = es.ask()
         fits = [rollout_solved(np.asarray(candidate)) for candidate in candidates]
         es.tell(candidates, [-fit for fit in fits])
+        cache_delta = len(worker.cache) - cache_before
         best_index = int(np.argmax(fits))
         if fits[best_index] > best_fit:
             best_fit = float(fits[best_index])
             best_vec = np.asarray(candidates[best_index]).copy()
+        sigma_str = ""
+        if args.adaptive_sigma:
+            old_sigma = es.sigma
+            if cache_delta < args.cache_low:
+                new_sigma = min(es.sigma * args.sigma_boost, args.sigma_max)
+            elif cache_delta > args.cache_high:
+                new_sigma = max(es.sigma * args.sigma_damp, args.sigma_min)
+            else:
+                new_sigma = es.sigma
+            if new_sigma != old_sigma:
+                es.sigma = new_sigma
+                es.pc = np.zeros(es.pc.shape)  # reset evolution path so CSA doesn't fight the override
+            sigma_str = f" sigma={es.sigma:.3f}(Δcache={cache_delta})"
         print(
             f"[iter {iteration}] best_solved={best_fit:.3f} "
-            f"(base {base_fit:.3f}, cache={len(worker.cache)})",
+            f"(base {base_fit:.3f}, cache={len(worker.cache)}{sigma_str})",
             flush=True,
         )
         if (iteration + 1) % args.save_every == 0 or iteration == args.iters - 1:

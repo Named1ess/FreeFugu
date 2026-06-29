@@ -543,6 +543,20 @@ function renderField(op, field) {
     label.append(caption, input);
   }
 
+  // show_if: hide this field until the controlling checkbox is checked
+  if (field.show_if) {
+    label.classList.add("conditional-field");
+    label.dataset.showIf = field.show_if;
+    const controller = document.querySelector(`[data-operation="${op.id}"][name="${field.show_if}"]`);
+    const syncVisibility = () => {
+      const ctrl = document.querySelector(`[data-operation="${op.id}"][name="${field.show_if}"]`);
+      if (!ctrl) return;
+      label.hidden = ctrl.type === "checkbox" ? !ctrl.checked : !ctrl.value;
+    };
+    syncVisibility();
+    // re-sync when the controller checkbox toggles (wired after render in renderOperationDetail)
+  }
+
   input.addEventListener("change", () => {
     const value = field.type === "checkbox" ? String(input.checked) : input.value;
     localStorage.setItem(storageKey(op.id, field.name), value);
@@ -662,6 +676,23 @@ function renderOperationDetail() {
   const fields = el("div", "field-grid");
   (op.fields || []).forEach((field) => fields.append(renderField(op, field)));
   body.append(fields);
+
+  // wire show_if controllers: when a checkbox toggles, show/hide dependent fields
+  const conditionalFields = fields.querySelectorAll(".conditional-field");
+  if (conditionalFields.length) {
+    const controllerNames = [...new Set([...conditionalFields].map((f) => f.dataset.showIf))];
+    controllerNames.forEach((ctrlName) => {
+      const ctrlInput = fields.querySelector(`[name="${ctrlName}"]`);
+      if (!ctrlInput) return;
+      const syncAll = () => {
+        const checked = ctrlInput.type === "checkbox" ? ctrlInput.checked : Boolean(ctrlInput.value);
+        conditionalFields
+          .filter((f) => f.dataset.showIf === ctrlName)
+          .forEach((f) => { f.hidden = !checked; });
+      };
+      ctrlInput.addEventListener("change", syncAll);
+    });
+  }
 
   const actions = el("div", "detail-actions");
   const button = el("button", "primary full", op.long_running ? "启动" : "运行");

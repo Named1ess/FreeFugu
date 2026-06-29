@@ -406,6 +406,18 @@ OPERATIONS: list[dict[str, Any]] = [
                 "flag": "--sigma0",
                 "default": "0.3",
             },
+            {
+                "name": "adaptive_sigma",
+                "label": "自适应 sigma（cache 增长慢时自动调大）",
+                "type": "checkbox",
+                "flag": "--adaptive-sigma",
+            },
+            {"name": "cache_low", "label": "cache 低阈值（低于则调大 sigma）", "type": "number", "flag": "--cache-low", "default": "10", "show_if": "adaptive_sigma"},
+            {"name": "cache_high", "label": "cache 高阈值（高于则调小 sigma）", "type": "number", "flag": "--cache-high", "default": "40", "show_if": "adaptive_sigma"},
+            {"name": "sigma_boost", "label": "sigma 调大倍率", "type": "number", "flag": "--sigma-boost", "default": "1.5", "show_if": "adaptive_sigma"},
+            {"name": "sigma_damp", "label": "sigma 调小倍率", "type": "number", "flag": "--sigma-damp", "default": "0.7", "show_if": "adaptive_sigma"},
+            {"name": "sigma_min", "label": "sigma 下限", "type": "number", "flag": "--sigma-min", "default": "0.05", "show_if": "adaptive_sigma"},
+            {"name": "sigma_max", "label": "sigma 上限", "type": "number", "flag": "--sigma-max", "default": "3.0", "show_if": "adaptive_sigma"},
             {"name": "seed", "label": "随机种子", "type": "number", "flag": "--seed", "default": "42"},
             {
                 "name": "out",
