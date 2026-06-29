@@ -14,6 +14,7 @@ from typing import Any, Iterable
 
 
 _RETRY_INTERVAL = 5.0
+_DEFAULT_HTTP_TIMEOUT = 180.0
 _RETRYABLE_HTTP_CODES = frozenset({408, 409, 429, 500, 502, 503, 504})
 
 
@@ -228,7 +229,8 @@ def openai_compatible_completion_content(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        request_timeout = _DEFAULT_HTTP_TIMEOUT if timeout is None else timeout
+        with urllib.request.urlopen(request, timeout=request_timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")

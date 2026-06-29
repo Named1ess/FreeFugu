@@ -248,6 +248,7 @@ def build_worker(args: argparse.Namespace) -> WorkerBuild:
 
     specs = load_slot_specs(args.slot_config, args.slot_config_env, min_count=1, max_count=N_AGENTS)
     slots = [item.strip() for item in (args.slot_models or "").split(",") if item.strip()]
+    export_api_keys = bool(getattr(args, "export_api_keys", False))
     if specs:
         worker = LiteLLMWorker(slot_specs=specs, max_tokens=args.max_tokens, temperature=args.temperature)
         check_litellm_connectivity(
@@ -260,7 +261,7 @@ def build_worker(args: argparse.Namespace) -> WorkerBuild:
         source = "slot_config"
         slot_rows = sanitized_slot_specs(
             specs,
-            export_api_keys=args.export_api_keys,
+            export_api_keys=export_api_keys,
             api_key=worker.api_key,
             api_base=worker.api_base,
         )
@@ -277,7 +278,7 @@ def build_worker(args: argparse.Namespace) -> WorkerBuild:
         source = "slot_models"
         slot_rows = sanitized_csv_slots(
             slots,
-            export_api_keys=args.export_api_keys,
+            export_api_keys=export_api_keys,
             api_key=worker.api_key,
             api_base=worker.api_base,
         )
@@ -309,6 +310,7 @@ def write_sidecar_json(
     head_size: int,
 ) -> Path:
     sidecar = out.with_suffix(".json")
+    export_api_keys = bool(getattr(args, "export_api_keys", False))
     data = {
         "head_file": str(out),
         "head_floats": head_size,
@@ -327,7 +329,7 @@ def write_sidecar_json(
             "temperature": args.temperature,
             "seed": args.seed,
             "diagonal_cma": not args.no_diagonal,
-            "export_api_keys": args.export_api_keys,
+            "export_api_keys": export_api_keys,
         },
         "result": {
             "base_solved": base_fit,
@@ -337,7 +339,7 @@ def write_sidecar_json(
         "notes": [
             (
                 "API keys were exported because --export-api-keys was set."
-                if args.export_api_keys
+                if export_api_keys
                 else "API keys are intentionally not stored in this sidecar."
             ),
             "If slot_count is less than 7, TRINITY agent_id maps to slot by agent_id % slot_count.",
