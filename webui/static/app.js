@@ -42,6 +42,21 @@ function fmtTime(seconds) {
   return new Date(seconds * 1000).toLocaleTimeString();
 }
 
+function fmtDuration(seconds) {
+  if (seconds === null || seconds === undefined) return "—";
+  if (seconds < 60) return `${seconds.toFixed(1)}s`;
+  const mins = Math.floor(seconds / 60);
+  const rest = Math.round(seconds % 60);
+  return `${mins}m ${rest}s`;
+}
+
+function fmtBytes(bytes) {
+  if (bytes === null || bytes === undefined) return "";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 function statusLabel(status) {
   const labels = {
     queued: "排队",
@@ -59,6 +74,79 @@ function el(tag, className, text) {
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
+}
+
+function resultValueText(value) {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(3);
+  if (typeof value === "boolean") return value ? "是" : "否";
+  return String(value);
+}
+
+function appendKvList(root, title, entries) {
+  if (!entries.length) return;
+  const section = el("div", "result-section");
+  section.append(el("span", "result-section-title", title));
+  const grid = el("div", "result-kv");
+  entries.forEach(([key, value]) => {
+    const item = el("div", "result-kv-item");
+    item.append(el("span", "", key), el("strong", "", resultValueText(value)));
+    grid.append(item);
+  });
+  section.append(grid);
+  root.append(section);
+}
+
+function renderJobResult(job) {
+  const root = $("#jobResult");
+  root.replaceChildren();
+  if (!job) return;
+
+  const result = job.result || {};
+  const status = result.status || job.status;
+  const summary = el("div", "result-summary");
+  summary.append(el("span", `job-status ${status}`, statusLabel(status)));
+  summary.append(el("span", "result-chip", `exit ${result.exit_code ?? job.exit_code ?? "—"}`));
+  summary.append(el("span", "result-chip", fmtDuration(result.duration_s)));
+  root.append(summary);
+
+  const metrics = result.metrics && typeof result.metrics === "object" ? Object.entries(result.metrics) : [];
+  appendKvList(root, "指标", metrics);
+
+  const training = result.training && typeof result.training === "object" ? result.training : {};
+  appendKvList(
+    root,
+    "训练",
+    ["n_train", "iters", "max_turns", "sigma0", "seed", "export_api_keys"]
+      .filter((key) => key in training)
+      .map((key) => [key, training[key]]),
+  );
+
+  const artifacts = Array.isArray(result.artifacts) ? result.artifacts.filter((item) => item.path) : [];
+  if (artifacts.length) {
+    const section = el("div", "result-section");
+    section.append(el("span", "result-section-title", "产物"));
+    const list = el("div", "artifact-list");
+    artifacts.forEach((artifact) => {
+      const item = el("div", `artifact-item ${artifact.exists ? "exists" : "missing"}`);
+      item.append(
+        el("span", "", artifact.label || "file"),
+        el("strong", "", artifact.exists ? "存在" : "缺失"),
+        el("code", "", `${artifact.path}${artifact.size ? ` · ${fmtBytes(artifact.size)}` : ""}`),
+      );
+      list.append(item);
+    });
+    section.append(list);
+    root.append(section);
+  }
+
+  if (Array.isArray(result.error_tail) && result.error_tail.length) {
+    const section = el("div", "result-section");
+    section.append(el("span", "result-section-title", "错误摘要"));
+    const pre = el("pre", "result-error", result.error_tail.join("\n"));
+    section.append(pre);
+    root.append(section);
+  }
 }
 
 function renderGroups() {
@@ -454,6 +542,7 @@ function renderJob(job) {
 
   if (!job) {
     meta.textContent = "暂无任务";
+    renderJobResult(null);
     log.textContent = "";
     state.renderedJobId = null;
     cancel.disabled = true;
@@ -467,6 +556,7 @@ function renderJob(job) {
   const nextLog = (job.logs || []).join("");
 
   meta.textContent = `${job.title} · ${statusLabel(job.status)}${code} · ${job.command.join(" ")}`;
+  renderJobResult(job);
   if (jobChanged || log.textContent !== nextLog) {
     log.textContent = nextLog;
     if (jobChanged || wasNearBottom) {

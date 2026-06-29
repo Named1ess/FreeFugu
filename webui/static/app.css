@@ -1,23 +1,24 @@
 :root {
-  color-scheme: light;
-  --bg: #f3f0e7;
-  --bg-deep: #eae4d5;
-  --surface: #fffdf7;
-  --surface-strong: #f8f1e3;
-  --ink: #111614;
-  --text: #202722;
-  --muted: #68736e;
-  --line: #d8d0be;
-  --line-strong: #a99f8b;
-  --rust: #c65b32;
-  --rust-dark: #9e4427;
-  --teal: #2f6f73;
-  --teal-dark: #224f52;
-  --good: #2f7d51;
-  --warn: #a36a00;
-  --bad: #a43a2d;
-  --well: #181d1b;
-  --well-text: #dbeee4;
+  color-scheme: dark;
+  --bg: #060a12;
+  --bg-deep: #0a1220;
+  --surface: #0d1625;
+  --surface-strong: #111d30;
+  --surface-hot: #14243a;
+  --ink: #e8f1ff;
+  --text: #c9d7ea;
+  --muted: #7f91ad;
+  --line: #20324c;
+  --line-strong: #34506f;
+  --rust: #00d4ff;
+  --rust-dark: #00a8d4;
+  --teal: #48f6d2;
+  --teal-dark: #6ee7ff;
+  --good: #3ee88f;
+  --warn: #f7b84b;
+  --bad: #ff647c;
+  --well: #03070d;
+  --well-text: #bfe7ff;
 }
 
 * {
@@ -36,8 +37,9 @@ body {
   grid-template-columns: 248px minmax(0, 1fr);
   color: var(--text);
   background:
-    linear-gradient(90deg, rgba(17, 22, 20, 0.035) 1px, transparent 1px) 0 0 / 24px 24px,
-    linear-gradient(rgba(17, 22, 20, 0.03) 1px, transparent 1px) 0 0 / 24px 24px,
+    radial-gradient(circle at 20% 0%, rgba(0, 212, 255, 0.12), transparent 28rem),
+    linear-gradient(90deg, rgba(92, 132, 180, 0.08) 1px, transparent 1px) 0 0 / 24px 24px,
+    linear-gradient(rgba(92, 132, 180, 0.06) 1px, transparent 1px) 0 0 / 24px 24px,
     var(--bg);
   font-family: "IBM Plex Sans", "Noto Sans SC", "Microsoft YaHei", sans-serif;
   letter-spacing: 0;
@@ -67,8 +69,9 @@ button:disabled {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  border-right: 1px solid var(--ink);
-  background: var(--surface);
+  border-right: 1px solid var(--line);
+  background: rgba(8, 14, 24, 0.94);
+  box-shadow: inset -1px 0 0 rgba(0, 212, 255, 0.08);
   overflow: auto;
 }
 
@@ -78,10 +81,11 @@ button:disabled {
   display: flex;
   align-items: center;
   gap: 10px;
-  border: 1px solid var(--ink);
+  border: 1px solid rgba(0, 212, 255, 0.42);
   border-radius: 6px;
-  background: var(--ink);
-  color: var(--surface);
+  background: linear-gradient(135deg, #0c1b2d, #111827);
+  color: var(--ink);
+  box-shadow: 0 0 24px rgba(0, 212, 255, 0.08);
 }
 
 .brand-mark {
@@ -89,9 +93,9 @@ button:disabled {
   height: 38px;
   display: grid;
   place-items: center;
-  border: 1px solid rgba(255, 253, 247, 0.42);
+  border: 1px solid rgba(0, 212, 255, 0.58);
   border-radius: 6px;
-  color: var(--surface);
+  color: var(--rust);
   font-family: "IBM Plex Sans Condensed", Bahnschrift, "Microsoft YaHei", sans-serif;
   font-size: 20px;
   font-weight: 800;
@@ -113,7 +117,7 @@ button:disabled {
 
 .brand p {
   margin-top: 3px;
-  color: #d9d4c7;
+  color: var(--muted);
   font-size: 12px;
 }
 
@@ -154,12 +158,12 @@ button:disabled {
 
 .nav-button.active,
 .nav-button:hover {
-  border-color: var(--ink);
-  background: var(--bg-deep);
+  border-color: rgba(0, 212, 255, 0.5);
+  background: rgba(0, 212, 255, 0.08);
 }
 
 .nav-button.active {
-  box-shadow: inset 4px 0 0 var(--rust);
+  box-shadow: inset 4px 0 0 var(--rust), 0 0 18px rgba(0, 212, 255, 0.08);
 }
 
 .nav-count {
@@ -167,7 +171,7 @@ button:disabled {
   padding: 2px 7px;
   border: 1px solid var(--line-strong);
   border-radius: 999px;
-  background: var(--surface);
+  background: var(--well);
   color: var(--ink);
   text-align: center;
   font-size: 12px;
@@ -181,6 +185,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--surface);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .status-panel {
@@ -195,7 +200,7 @@ button:disabled {
   align-items: center;
   gap: 10px;
   border-bottom: 1px solid var(--line);
-  background: var(--bg-deep);
+  background: linear-gradient(180deg, var(--surface-hot), var(--surface));
 }
 
 .section-head h2 {
@@ -210,11 +215,11 @@ button:disabled {
   border: 1px solid var(--line-strong);
   border-radius: 6px;
   background: var(--surface);
-  color: var(--ink);
+  color: var(--rust);
 }
 
 .icon-button:hover {
-  border-color: var(--ink);
+  border-color: var(--rust);
 }
 
 .status-list {
@@ -266,7 +271,7 @@ button:disabled {
   align-items: end;
   margin-bottom: 14px;
   padding-bottom: 14px;
-  border-bottom: 1px solid var(--ink);
+  border-bottom: 1px solid var(--line);
 }
 
 .topbar h2 {
@@ -292,7 +297,7 @@ button:disabled {
   min-height: 24px;
   padding: 3px 8px;
   border: 1px solid var(--line-strong);
-  border-radius: 999px;
+  border-radius: 6px;
   background: var(--surface);
   color: var(--ink);
   font-size: 12px;
@@ -319,7 +324,7 @@ button:disabled {
 .field input:focus,
 .field textarea:focus {
   border-color: var(--rust);
-  box-shadow: inset 0 0 0 1px var(--rust);
+  box-shadow: inset 0 0 0 1px var(--rust), 0 0 0 3px rgba(0, 212, 255, 0.09);
 }
 
 .console-layout {
@@ -370,7 +375,7 @@ button:disabled {
   align-items: start;
   gap: 12px;
   border-bottom: 1px solid var(--line);
-  background: var(--bg-deep);
+  background: linear-gradient(180deg, var(--surface-hot), var(--surface));
 }
 
 .operation-card h3 {
@@ -394,7 +399,7 @@ button:disabled {
 .badge {
   border-color: var(--line);
   background: var(--surface);
-  color: var(--teal-dark);
+  color: var(--teal);
 }
 
 .field-grid {
@@ -578,13 +583,14 @@ button:disabled {
 
 .primary {
   margin: 12px;
-  border: 1px solid var(--rust-dark);
-  background: var(--rust);
-  color: #fffaf1;
+  border: 1px solid rgba(0, 212, 255, 0.68);
+  background: linear-gradient(180deg, #00d4ff, #008fc4);
+  color: #021018;
+  box-shadow: 0 0 18px rgba(0, 212, 255, 0.16);
 }
 
 .primary:hover {
-  background: var(--rust-dark);
+  background: linear-gradient(180deg, #6ee7ff, #00a8d4);
 }
 
 .secondary {
@@ -594,12 +600,12 @@ button:disabled {
 }
 
 .secondary:hover {
-  border-color: var(--ink);
+  border-color: var(--rust);
 }
 
 .secondary.danger {
   color: var(--bad);
-  border-color: #c89a8d;
+  border-color: rgba(255, 100, 124, 0.55);
 }
 
 .full {
@@ -640,6 +646,121 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.job-result {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(3, 7, 13, 0.46);
+}
+
+.job-result:empty {
+  display: none;
+}
+
+.result-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.result-chip {
+  min-height: 24px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--well);
+  color: var(--muted);
+  font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+}
+
+.result-section {
+  display: grid;
+  gap: 6px;
+}
+
+.result-section-title {
+  color: var(--teal-dark);
+  font-family: "IBM Plex Sans Condensed", Bahnschrift, "Microsoft YaHei", sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.result-kv {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.result-kv-item,
+.artifact-item {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.result-kv-item span,
+.artifact-item span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.result-kv-item strong,
+.artifact-item strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--ink);
+  font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.artifact-list {
+  display: grid;
+  gap: 6px;
+}
+
+.artifact-item {
+  display: grid;
+  grid-template-columns: 70px 46px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+}
+
+.artifact-item.exists strong {
+  color: var(--good);
+}
+
+.artifact-item.missing strong {
+  color: var(--bad);
+}
+
+.artifact-item code {
+  color: var(--well-text);
+  font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.result-error {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid rgba(255, 100, 124, 0.36);
+  border-radius: 6px;
+  background: rgba(255, 100, 124, 0.08);
+  color: #ffd0d8;
+  white-space: pre-wrap;
+  font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+
 .log-output,
 .mini-output {
   width: 100%;
@@ -648,6 +769,7 @@ button:disabled {
   color: var(--well-text);
   overflow: auto;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
   font-size: 12px;
   line-height: 1.45;
@@ -703,7 +825,7 @@ button:disabled {
 }
 
 .job-item:hover {
-  background: var(--surface-strong);
+  background: rgba(0, 212, 255, 0.08);
 }
 
 .job-item strong {
@@ -724,21 +846,21 @@ button:disabled {
 
 .job-status.running,
 .job-status.cancelling {
-  border-color: var(--teal);
-  background: var(--teal);
-  color: #f4fffa;
+  border-color: rgba(247, 184, 75, 0.75);
+  background: rgba(247, 184, 75, 0.14);
+  color: var(--warn);
 }
 
 .job-status.succeeded {
   border-color: var(--good);
-  background: #e1f0e5;
+  background: rgba(62, 232, 143, 0.12);
   color: var(--good);
 }
 
 .job-status.failed,
 .job-status.cancelled {
-  border-color: #d4aaa0;
-  background: #f6e4df;
+  border-color: rgba(255, 100, 124, 0.55);
+  background: rgba(255, 100, 124, 0.12);
   color: var(--bad);
 }
 
@@ -747,7 +869,7 @@ button:disabled {
   border: 1px dashed var(--line-strong);
   border-radius: 6px;
   color: var(--muted);
-  background: rgba(255, 253, 247, 0.72);
+  background: rgba(8, 14, 24, 0.58);
 }
 
 @media (max-width: 1700px) {

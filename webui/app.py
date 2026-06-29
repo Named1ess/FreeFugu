@@ -660,6 +660,7 @@ class Job:
     created_at: float = field(default_factory=time.time)
     started_at: float | None = None
     ended_at: float | None = None
+    result: dict[str, Any] | None = None
     logs: list[str] = field(default_factory=list)
     process: subprocess.Popen[str] | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
@@ -682,6 +683,7 @@ class Job:
             "created_at": self.created_at,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
+            "result": self.result,
         }
 
     def detail(self) -> dict[str, Any]:
@@ -811,6 +813,116 @@ def build_command(op: dict[str, Any], values: dict[str, Any]) -> tuple[list[str]
     return cmd, env_overrides
 
 
+def command_flag_value(command: list[str], flag: str) -> str | None:
+    try:
+        index = command.index(flag)
+    except ValueError:
+        return None
+    next_index = index + 1
+    if next_index >= len(command):
+        return None
+    value = command[next_index]
+    return None if value.startswith("--") else value
+
+
+def artifact_info(label: str, path_value: str | None) -> dict[str, Any] | None:
+    if not path_value:
+        return None
+    path = Path(path_value)
+    if not path.is_absolute():
+        path = ROOT / path
+    info: dict[str, Any] = {
+        "label": label,
+        "path": str(path),
+        "exists": path.exists(),
+    }
+    if path.exists() and path.is_file():
+        stat = path.stat()
+        info.update(
+            {
+                "size": stat.st_size,
+                "modified_at": stat.st_mtime,
+            }
+        )
+    return info
+
+
+def sanitize_json_for_ui(value: Any) -> Any:
+    if isinstance(value, dict):
+        out: dict[str, Any] = {}
+        for key, item in value.items():
+            if key.lower() in {"api_key", "key", "authorization", "token"}:
+                out[key] = "已隐藏"
+            else:
+                out[key] = sanitize_json_for_ui(item)
+        return out
+    if isinstance(value, list):
+        return [sanitize_json_for_ui(item) for item in value]
+    return value
+
+
+def read_json_if_exists(path: Path) -> dict[str, Any] | None:
+    if not path.exists() or not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def infer_sidecar_path(out_path: str | None) -> Path | None:
+    if not out_path:
+        return None
+    path = Path(out_path)
+    if not path.is_absolute():
+        path = ROOT / path
+    return path.with_suffix(".json")
+
+
+def build_job_result(job: Job, code: int | None = None) -> dict[str, Any]:
+    exit_code = job.exit_code if code is None else code
+    duration = None
+    if job.started_at:
+        duration = (job.ended_at or time.time()) - job.started_at
+
+    out_path = command_flag_value(job.command, "--out")
+    checkpoint_path = command_flag_value(job.command, "--checkpoint")
+    artifacts = [
+        artifact
+        for artifact in [
+            artifact_info("out", out_path),
+            artifact_info("checkpoint", checkpoint_path),
+            artifact_info("head", command_flag_value(job.command, "--head")),
+            artifact_info("vector", command_flag_value(job.command, "--vector")),
+            artifact_info("coordinator", command_flag_value(job.command, "--coordinator")),
+        ]
+        if artifact is not None
+    ]
+
+    sidecar_path = infer_sidecar_path(out_path)
+    sidecar = read_json_if_exists(sidecar_path) if sidecar_path else None
+    if sidecar_path:
+        artifacts.append(artifact_info("metadata", str(sidecar_path)))
+
+    result: dict[str, Any] = {
+        "status": job.status,
+        "exit_code": exit_code,
+        "duration_s": round(duration, 3) if duration is not None else None,
+        "artifacts": artifacts,
+    }
+    if sidecar:
+        result["metrics"] = sanitize_json_for_ui(sidecar.get("result") or {})
+        result["training"] = sanitize_json_for_ui(sidecar.get("training") or {})
+        result["slots"] = sanitize_json_for_ui(sidecar.get("slots") or [])
+        result["sidecar_path"] = str(sidecar_path)
+    if exit_code not in (None, 0):
+        with job.lock:
+            tail = [line.strip() for line in job.logs[-12:] if line.strip()]
+        result["error_tail"] = tail[-4:]
+    return result
+
+
 def run_job(job: Job) -> None:
     env = os.environ.copy()
     env.update(job.env)
@@ -840,19 +952,28 @@ def run_job(job: Job) -> None:
         for line in job.process.stdout:
             job.append(line)
         code = job.process.wait()
+        job.ended_at = time.time()
         if job.status == "cancelling":
             job.status = "cancelled"
+            job.exit_code = code
+            job.result = build_job_result(job, code)
         else:
             job.exit_code = code
             job.status = "succeeded" if code == 0 else "failed"
             if code != 0:
                 job.append(f"\n[webui] process exited with code {code} ({code:#x})\n")
+            job.result = build_job_result(job, code)
     except Exception as exc:  # surfaced in the Web UI log panel
+        job.ended_at = time.time()
         job.exit_code = -1
         job.status = "failed"
         job.append(f"\n[webui] {type(exc).__name__}: {exc}\n")
+        job.result = build_job_result(job, -1)
     finally:
-        job.ended_at = time.time()
+        if job.ended_at is None:
+            job.ended_at = time.time()
+        if job.result is None:
+            job.result = build_job_result(job)
 
 
 def start_job(operation_id: str, values: dict[str, Any]) -> Job:
