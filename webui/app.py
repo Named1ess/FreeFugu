@@ -629,6 +629,11 @@ def has_value(value: Any) -> bool:
     return value is not None and str(value).strip() != ""
 
 
+def looks_like_full_api_endpoint(value: str) -> bool:
+    url = value.strip().rstrip("/").lower()
+    return url.endswith("/chat/completions") or url.endswith("/messages")
+
+
 def normalize_slot_config(value: Any, field_def: dict[str, Any], errors: list[str]) -> list[dict[str, str]]:
     max_slots = int(field_def.get("max_slots") or field_def.get("slots") or 7)
     min_slots = int(field_def.get("min_slots") or 1)
@@ -665,6 +670,12 @@ def normalize_slot_config(value: Any, field_def: dict[str, Any], errors: list[st
         api_key = str(row.get("api_key") or "").strip()
         if not model:
             errors.append(f"{label} 槽位 {index} 的模型不能为空")
+            continue
+        if api_base and looks_like_full_api_endpoint(api_base):
+            errors.append(
+                f"{label} 槽位 {index} 的 API URL 请填 base URL；"
+                "不要填 /chat/completions 或 /messages。是否包含 /v1 取决于服务商。"
+            )
             continue
         spec = {"model": model}
         if api_base:

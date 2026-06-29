@@ -31,9 +31,21 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 try:
-    from .slot_config import SlotSpec, load_slot_specs, slot_labels as labels_from_specs
+    from .slot_config import (
+        SlotSpec,
+        check_litellm_connectivity,
+        completion_content,
+        load_slot_specs,
+        slot_labels as labels_from_specs,
+    )
 except ImportError:  # script execution from openfugu/
-    from slot_config import SlotSpec, load_slot_specs, slot_labels as labels_from_specs
+    from slot_config import (
+        SlotSpec,
+        check_litellm_connectivity,
+        completion_content,
+        load_slot_specs,
+        slot_labels as labels_from_specs,
+    )
 
 N_AGENTS = 7
 MAX_STEPS = 5                      # [DOC] Conductor workflows up to 5 steps
@@ -228,17 +240,27 @@ class LiteLLMWorker:
         self.max_tokens, self.temperature = max_tokens, temperature
 
     def _call(self, model, messages, spec: SlotSpec | None = None):
-        kw = dict(model=model, messages=messages,
-                  max_tokens=self.max_tokens, temperature=self.temperature)
-        api_key = (spec.api_key if spec else None) or self.api_key
-        api_base = (spec.api_base if spec else None) or self.api_base
-        if api_key:  kw["api_key"] = api_key
-        if api_base: kw["api_base"] = api_base
-        return self.litellm.completion(**kw).choices[0].message.content or ""
+        effective_spec = spec or SlotSpec(model=model)
+        return completion_content(
+            effective_spec,
+            messages,
+            api_key=self.api_key,
+            api_base=self.api_base,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+        )
 
     def __call__(self, subtask, messages, agent_id):
         spec = self.slot_specs[agent_id % len(self.slot_specs)]
         return self._call(spec.model, messages, spec)
+
+    def check_connectivity(self, label: str = "worker pool") -> None:
+        check_litellm_connectivity(
+            self.slot_specs,
+            api_key=self.api_key,
+            api_base=self.api_base,
+            label=label,
+        )
 
     def conduct(self, model, messages):     # the Conductor call (more tokens)
         old = self.max_tokens; self.max_tokens = 2048
@@ -402,6 +424,7 @@ def main(argv=None):
         slot_specs = load_slot_specs(args.slot_config, args.slot_config_env, min_count=1, max_count=N_AGENTS)
         slots = args.slot_models.split(",") if args.slot_models else None
         worker = LiteLLMWorker(slot_models=slots, slot_specs=slot_specs)
+        worker.check_connectivity()
         slot_labels = labels_from_specs(slot_specs) if slot_specs else (slots or DEFAULT_SLOT_LABELS)
         print(f"workers: litellm ({len(slot_labels)} slots)")
 
@@ -412,7 +435,18 @@ def main(argv=None):
         completion = conductor.conduct(conductor_prompt(args.query, slot_labels))
     else:
         print(f"conductor: {args.conductor}")
-        completion = worker.conduct(args.conductor, conductor_prompt(args.query, slot_labels))
+        if isinstance(worker, LiteLLMWorker):
+            conductor_client = worker
+            check_litellm_connectivity(
+                [SlotSpec(model=args.conductor)],
+                api_key=worker.api_key,
+                api_base=worker.api_base,
+                label="conductor",
+            )
+        else:
+            conductor_client = LiteLLMWorker(slot_specs=[SlotSpec(model=args.conductor)])
+            conductor_client.check_connectivity("conductor")
+        completion = conductor_client.conduct(args.conductor, conductor_prompt(args.query, slot_labels))
 
     print(f"query: {args.query}\n")
     mids, subs, acc = parse_workflow(completion)

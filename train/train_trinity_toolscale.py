@@ -31,6 +31,13 @@ HIDDEN_POS = -2
 
 # reuse the ToolScale reward + prompt verbatim (no reward duplication)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "openfugu"))
+from slot_config import (  # noqa: E402
+    SlotSpec,
+    check_litellm_connectivity,
+    completion_content,
+)
 from toolscale_data import _expected_actions, _parse_plan, _score, SYSTEM
 
 
@@ -79,13 +86,19 @@ def main():
     ap.add_argument("--out", default="trinity_toolscale.npy")
     args = ap.parse_args()
 
-    import cma, litellm
+    import cma
     from datasets import load_dataset
 
     workers = args.slot_models.split(",")
     n_workers = len(workers)
     api_key = os.environ.get("FUGU_API_KEY") or os.environ.get("NOVITA_API_KEY") or os.environ.get("OPENAI_API_KEY")
     api_base = os.environ.get("FUGU_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+    check_litellm_connectivity(
+        [SlotSpec(model=worker) for worker in workers],
+        api_key=api_key,
+        api_base=api_base,
+        label="worker pool",
+    )
 
     ds = load_dataset("nvidia/ToolScale", split="train").shuffle(seed=args.seed)
     tasks = []
@@ -110,13 +123,16 @@ def main():
         if key in solve_cache:
             return solve_cache[key]
         try:
-            kw = dict(model=workers[wid],
-                      messages=[{"role": "system", "content": SYSTEM},
-                                {"role": "user", "content": f"USER QUESTION: {q}"}],
-                      max_tokens=args.max_tokens, temperature=0.0)
-            if api_key: kw["api_key"] = api_key
-            if api_base: kw["api_base"] = api_base
-            out = litellm.completion(**kw).choices[0].message.content or ""
+            spec = SlotSpec(model=workers[wid])
+            out = completion_content(
+                spec,
+                [{"role": "system", "content": SYSTEM},
+                 {"role": "user", "content": f"USER QUESTION: {q}"}],
+                api_key=api_key,
+                api_base=api_base,
+                max_tokens=args.max_tokens,
+                temperature=0.0,
+            )
             pred = _parse_plan(out)
             s = 0.0 if pred is None else _score(pred, gold)
         except Exception as e:

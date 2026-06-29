@@ -24,6 +24,14 @@ from __future__ import annotations
 import argparse, os, re, sys
 import numpy as np
 
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "openfugu"))
+from slot_config import (  # noqa: E402
+    SlotSpec,
+    check_litellm_connectivity,
+    completion_content,
+)
+
 HIDDEN = 1024
 HIDDEN_POS = -2
 
@@ -84,13 +92,19 @@ def main():
     ap.add_argument("--out", default="trinity_gsm8k.npy")
     args = ap.parse_args()
 
-    import cma, litellm
+    import cma
     from datasets import load_dataset
 
     workers = args.slot_models.split(",")
     n_workers = len(workers)
     api_key = os.environ.get("FUGU_API_KEY") or os.environ.get("NOVITA_API_KEY") or os.environ.get("OPENAI_API_KEY")
     api_base = os.environ.get("FUGU_BASE_URL") or os.environ.get("OPENAI_BASE_URL")
+    check_litellm_connectivity(
+        [SlotSpec(model=worker) for worker in workers],
+        api_key=api_key,
+        api_base=api_base,
+        label="worker pool",
+    )
 
     ds = load_dataset("openai/gsm8k", "main", split=f"train[:{args.n_train}]")
     tasks = [(r["question"], gold_answer(r["answer"])) for r in ds]
@@ -107,13 +121,16 @@ def main():
         if key in solve_cache:
             return solve_cache[key]
         try:
-            kw = dict(model=workers[wid],
-                      messages=[{"role": "user",
-                                 "content": q + "\nGive the final numeric answer at the end."}],
-                      max_tokens=args.max_tokens, temperature=0.0)
-            if api_key: kw["api_key"] = api_key
-            if api_base: kw["api_base"] = api_base
-            out = litellm.completion(**kw).choices[0].message.content or ""
+            spec = SlotSpec(model=workers[wid])
+            out = completion_content(
+                spec,
+                [{"role": "user",
+                  "content": q + "\nGive the final numeric answer at the end."}],
+                api_key=api_key,
+                api_base=api_base,
+                max_tokens=args.max_tokens,
+                temperature=0.0,
+            )
             ok = 1.0 if numeric_answer(out) == gold else 0.0
         except Exception as e:
             print(f"   [warn] worker {wid} call failed: {str(e)[:60]}", flush=True)

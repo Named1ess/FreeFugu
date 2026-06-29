@@ -155,7 +155,7 @@ function renderSlotConfigField(op, field) {
   const grid = el("div", "slot-grid");
   const columns = [
     ["model", "模型", "openai/gpt-4o-mini", "text"],
-    ["api_base", "API URL", "https://api.example.com/v1", "url"],
+    ["api_base", "API Base URL", "https://api.deepseek.com", "url"],
     ["api_key", "API Key", "sk-...", "password"],
   ];
 

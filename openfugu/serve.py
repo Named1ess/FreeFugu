@@ -31,7 +31,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from mini import (FuguRouter, Coordinator, LiteLLMWorker, MockWorker,
                   DEFAULT_SLOT_LABELS, HEAD_ROWS, HIDDEN, N_AGENTS)
-from slot_config import load_slot_specs, slot_labels
+from slot_config import SlotSpec, check_litellm_connectivity, load_slot_specs, slot_labels
 
 ROUTER: FuguRouter | None = None
 WORKER = None
@@ -155,6 +155,20 @@ def main():
     args = ap.parse_args()
     MAX_TURNS = args.max_turns
 
+    slot_specs = None
+    if not args.local_models:
+        if args.slot_models:
+            loaded_specs = load_slot_specs(args.slot_config, args.slot_config_env, min_count=1, max_count=N_AGENTS)
+            slot_specs = loaded_specs or [
+                SlotSpec(model=item.strip())
+                for item in args.slot_models.split(",")
+                if item.strip()
+            ]
+        elif args.slot_config or args.slot_config_env or os.environ.get("FUGU_SLOT_CONFIG"):
+            slot_specs = load_slot_specs(args.slot_config, args.slot_config_env, min_count=1, max_count=N_AGENTS)
+        if slot_specs:
+            check_litellm_connectivity(slot_specs, label="worker pool")
+
     print(f"[serve] loading TRINITY router ({args.model}) ...", flush=True)
     ROUTER = FuguRouter(args.model, args.vector, seed=0)
     if args.head:                                  # layer a trained head over base SVF
@@ -178,17 +192,10 @@ def main():
         WORKER = LocalPoolWorker(specs)
         print(f"[serve] worker pool: LOCAL ({len(specs)}): "
               f"{[n for n,_,_ in specs]}", flush=True)
-    elif args.slot_models:
-        specs = load_slot_specs(args.slot_config, args.slot_config_env, min_count=1, max_count=N_AGENTS)
-        WORKER = LiteLLMWorker(slot_models=args.slot_models.split(","), slot_specs=specs)
-        labels = slot_labels(specs) if specs else args.slot_models.split(",")
+    elif slot_specs:
+        WORKER = LiteLLMWorker(slot_specs=slot_specs)
+        labels = slot_labels(slot_specs)
         print(f"[serve] worker pool: litellm ({len(labels)} slots): {labels}", flush=True)
-    elif args.slot_config or args.slot_config_env or os.environ.get("FUGU_SLOT_CONFIG"):
-        specs = load_slot_specs(args.slot_config, args.slot_config_env, min_count=1, max_count=N_AGENTS)
-        assert specs is not None
-        WORKER = LiteLLMWorker(slot_specs=specs)
-        print(f"[serve] worker pool: litellm slot-config ({len(specs)} slots): "
-              f"{slot_labels(specs)}", flush=True)
     else:
         WORKER = MockWorker()
         print("[serve] worker pool: MOCK (no --slot-models / --local-models given)", flush=True)

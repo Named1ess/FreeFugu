@@ -39,7 +39,7 @@ from mini import (  # noqa: E402
     N_AGENTS,
     VEC_LEN,
 )
-from slot_config import SlotSpec, load_slot_specs, slot_labels  # noqa: E402
+from slot_config import SlotSpec, check_litellm_connectivity, load_slot_specs, slot_labels  # noqa: E402
 
 
 DEFAULT_VECTOR = ROOT / "artifacts" / "model_iter_identity.npy"
@@ -209,11 +209,24 @@ def build_worker(args: argparse.Namespace) -> WorkerBuild:
     slots = [item.strip() for item in (args.slot_models or "").split(",") if item.strip()]
     if specs:
         worker = LiteLLMWorker(slot_specs=specs, max_tokens=args.max_tokens, temperature=args.temperature)
+        check_litellm_connectivity(
+            specs,
+            api_key=worker.api_key,
+            api_base=worker.api_base,
+            label="worker pool",
+        )
         labels = slot_labels(specs)
         source = "slot_config"
         slot_rows = sanitized_slot_specs(specs)
     elif slots:
-        worker = LiteLLMWorker(slot_models=slots, max_tokens=args.max_tokens, temperature=args.temperature)
+        specs = [SlotSpec(model=model) for model in slots]
+        worker = LiteLLMWorker(slot_specs=specs, max_tokens=args.max_tokens, temperature=args.temperature)
+        check_litellm_connectivity(
+            specs,
+            api_key=worker.api_key,
+            api_base=worker.api_base,
+            label="worker pool",
+        )
         labels = slots
         source = "slot_models"
         slot_rows = sanitized_csv_slots(slots)

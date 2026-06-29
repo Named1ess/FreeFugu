@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 @dataclass(frozen=True)
@@ -16,11 +18,318 @@ class SlotSpec:
     label: str | None = None
 
 
+OPENAI_COMPAT_HINT = (
+    "API URL is passed to LiteLLM as api_base. For OpenAI-compatible servers, "
+    "enter the provider base URL, not the full /chat/completions endpoint. "
+    "Some providers use /v1 in the base URL and some do not."
+)
+
+
 def _clean(value: Any) -> str | None:
     if value is None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _provider_name(model: str | None = None, api_base: str | None = None) -> str:
+    model_text = (model or "").lower()
+    base_text = (api_base or "").lower()
+    if "/" in model_text:
+        return model_text.split("/", 1)[0]
+    if model_text.startswith("gemini") or "generativelanguage.googleapis.com" in base_text:
+        return "gemini"
+    if model_text.startswith("deepseek") or "deepseek.com" in base_text:
+        return "deepseek"
+    if model_text.startswith("claude") or "anthropic.com" in base_text:
+        return "anthropic"
+    if "api.openai.com" in base_text:
+        return "openai"
+    if "openrouter.ai" in base_text:
+        return "openrouter"
+    if "api.groq.com" in base_text:
+        return "groq"
+    if "novita" in base_text:
+        return "novita"
+    return ""
+
+
+def _provider_key_env(model: str | None = None, api_base: str | None = None) -> str | None:
+    provider = _provider_name(model, api_base)
+    return {
+        "anthropic": "ANTHROPIC_API_KEY",
+        "deepseek": "DEEPSEEK_API_KEY",
+        "gemini": "GEMINI_API_KEY",
+        "google": "GEMINI_API_KEY",
+        "groq": "GROQ_API_KEY",
+        "novita": "NOVITA_API_KEY",
+        "openai": "OPENAI_API_KEY",
+        "openrouter": "OPENROUTER_API_KEY",
+    }.get(provider)
+
+
+def default_api_key(
+    api_key: str | None = None,
+    model: str | None = None,
+    api_base: str | None = None,
+) -> str | None:
+    explicit_key = _clean(api_key)
+    if explicit_key:
+        return explicit_key
+
+    fugu_key = _clean(os.environ.get("FUGU_API_KEY"))
+    if fugu_key:
+        return fugu_key
+
+    provider_env = _provider_key_env(model, api_base)
+    if provider_env:
+        key = _clean(os.environ.get(provider_env))
+        if key:
+            return key
+    return _clean(os.environ.get("OPENAI_API_KEY"))
+
+
+def default_api_base(api_base: str | None = None) -> str | None:
+    return (
+        _clean(api_base)
+        or _clean(os.environ.get("FUGU_BASE_URL"))
+        or _clean(os.environ.get("OPENAI_BASE_URL"))
+    )
+
+
+def litellm_credentials(
+    spec: SlotSpec | None = None,
+    api_key: str | None = None,
+    api_base: str | None = None,
+) -> dict[str, str]:
+    """Return the credential kwargs used by every LiteLLM caller."""
+    model = spec.model if spec else None
+    base = (spec.api_base if spec else None) or default_api_base(api_base)
+    key = (spec.api_key if spec else None) or default_api_key(
+        api_key,
+        model=model,
+        api_base=base,
+    )
+    out: dict[str, str] = {}
+    if key:
+        out["api_key"] = key
+    if base:
+        out["api_base"] = base
+    return out
+
+
+def uses_openai_compatible_http(model: str, api_base: str | None = None) -> bool:
+    return bool(_clean(api_base)) and "/" not in (_clean(model) or "")
+
+
+def _chat_completions_url(api_base: str) -> str:
+    base = api_base.strip().rstrip("/")
+    if base.lower().endswith("/chat/completions"):
+        return base
+    return f"{base}/chat/completions"
+
+
+def openai_compatible_completion_content(
+    *,
+    model: str,
+    messages: list[dict[str, str]],
+    api_key: str | None,
+    api_base: str,
+    max_tokens: int,
+    temperature: float,
+    timeout: float | None = None,
+) -> str:
+    body = {
+        "model": model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": False,
+    }
+    headers = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    request = urllib.request.Request(
+        _chat_completions_url(api_base),
+        data=json.dumps(body).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {exc.code}: {error_body[:500]}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(str(exc.reason)) from exc
+
+    try:
+        return payload["choices"][0]["message"].get("content") or ""
+    except (KeyError, IndexError, TypeError) as exc:
+        raise RuntimeError(f"Unexpected chat completion response: {payload}") from exc
+
+
+def completion_content(
+    spec: SlotSpec,
+    messages: list[dict[str, str]],
+    *,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    max_tokens: int = 1024,
+    temperature: float = 0.2,
+    timeout: float | None = None,
+) -> str:
+    credentials = litellm_credentials(spec, api_key=api_key, api_base=api_base)
+    base = credentials.get("api_base")
+    if uses_openai_compatible_http(spec.model, base):
+        return openai_compatible_completion_content(
+            model=spec.model,
+            messages=messages,
+            api_key=credentials.get("api_key"),
+            api_base=base,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            timeout=timeout,
+        )
+
+    import litellm
+
+    kwargs: dict[str, Any] = {
+        "model": spec.model,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    if timeout is not None:
+        kwargs["timeout"] = timeout
+    kwargs.update(credentials)
+    return litellm.completion(**kwargs).choices[0].message.content or ""
+
+
+def describe_api_format(model: str, api_base: str | None = None) -> str:
+    provider = _provider_name(model, api_base) or "openai-compatible"
+    if provider == "anthropic":
+        return (
+            "Anthropic model via LiteLLM. The code still passes OpenAI-style "
+            "chat messages to LiteLLM, which translates to Anthropic's native "
+            "messages API. api_base should be a provider base URL, not the full "
+            "/messages endpoint."
+        )
+    if provider in {"openai", "azure", "openrouter", "deepseek", "novita", "groq"}:
+        return OPENAI_COMPAT_HINT
+    if api_base:
+        return OPENAI_COMPAT_HINT
+    return (
+        "Provider is selected by the LiteLLM model prefix. If you set API URL, "
+        "it is treated as api_base rather than a full request endpoint."
+    )
+
+
+def _safe_url(value: str | None) -> str:
+    if not value:
+        return "(provider default)"
+    return value.split("?", 1)[0]
+
+
+def _looks_like_full_endpoint(api_base: str | None) -> bool:
+    if not api_base:
+        return False
+    value = api_base.rstrip("/").lower()
+    return value.endswith("/chat/completions") or value.endswith("/messages")
+
+
+def _looks_like_auth_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in (
+            "401",
+            "unauthorized",
+            "authentication",
+            "api key",
+            "invalid key",
+            "invalid_request_error",
+        )
+    )
+
+
+def _credential_hint(spec: SlotSpec, api_base: str | None = None) -> str:
+    env_name = _provider_key_env(spec.model, api_base)
+    if env_name:
+        return f"Check the slot api_key, {env_name}, or FUGU_API_KEY."
+    return "Check the slot api_key, provider API key env var, or FUGU_API_KEY."
+
+
+def connectivity_check_enabled() -> bool:
+    value = os.environ.get("FUGU_SKIP_CONNECTIVITY_CHECK", "").strip().lower()
+    return value not in {"1", "true", "yes", "on"}
+
+
+def check_litellm_connectivity(
+    specs: Iterable[SlotSpec],
+    *,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    timeout: float = 20,
+    label: str = "litellm",
+) -> None:
+    """Fail fast if configured remote model slots cannot answer a tiny request."""
+    specs = list(specs)
+    if not specs:
+        return
+    if not connectivity_check_enabled():
+        print("[preflight] LiteLLM connectivity check skipped by FUGU_SKIP_CONNECTIVITY_CHECK", flush=True)
+        return
+
+    print(f"[preflight] checking {label} connectivity ({len(specs)} slot(s)) ...", flush=True)
+    seen: set[tuple[str, str, bool, str]] = set()
+    for index, spec in enumerate(specs):
+        credentials = litellm_credentials(spec, api_key=api_key, api_base=api_base)
+        base = credentials.get("api_base")
+        backend = "http" if uses_openai_compatible_http(spec.model, base) else "litellm"
+        dedupe_key = (spec.model, base or "", bool(credentials.get("api_key")), backend)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        if _looks_like_full_endpoint(base):
+            raise RuntimeError(
+                f"slot {index} ({spec.model}) API URL looks like a full endpoint: "
+                f"{_safe_url(base)}. {describe_api_format(spec.model, base)}"
+            )
+
+        try:
+            completion_content(
+                spec,
+                [{"role": "user", "content": "Reply with OK."}],
+                api_key=api_key,
+                api_base=api_base,
+                max_tokens=2,
+                temperature=0,
+                timeout=timeout,
+            )
+        except Exception as exc:
+            if _looks_like_auth_error(exc):
+                raise RuntimeError(
+                    f"LiteLLM connectivity check reached slot {index} "
+                    f"({spec.model}, backend={backend}, "
+                    f"api_base={_safe_url(base)}) but authentication failed. "
+                    f"{_credential_hint(spec, base)} "
+                    f"Original error: {type(exc).__name__}: {exc}"
+                ) from exc
+            raise RuntimeError(
+                f"LiteLLM connectivity check failed for slot {index} "
+                f"({spec.model}, backend={backend}, "
+                f"api_base={_safe_url(base)}). "
+                f"{describe_api_format(spec.model, base)} "
+                f"Original error: {type(exc).__name__}: {exc}"
+            ) from exc
+        print(
+            f"[preflight] ok slot {index}: {spec.label or spec.model} "
+            f"model={spec.model} backend={backend} "
+            f"api_base={_safe_url(base)}",
+            flush=True,
+        )
 
 
 def _slot_from_raw(raw: Any, index: int) -> SlotSpec:

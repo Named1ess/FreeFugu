@@ -36,9 +36,19 @@ from typing import Callable
 import numpy as np
 
 try:
-    from .slot_config import SlotSpec, load_slot_specs
+    from .slot_config import (
+        SlotSpec,
+        check_litellm_connectivity,
+        completion_content,
+        load_slot_specs,
+    )
 except ImportError:  # script execution from openfugu/
-    from slot_config import SlotSpec, load_slot_specs
+    from slot_config import (
+        SlotSpec,
+        check_litellm_connectivity,
+        completion_content,
+        load_slot_specs,
+    )
 
 # ---- verified structural constants ------------------------------------------
 HIDDEN = 1024              # [EXEC] Qwen3-0.6B hidden size
@@ -267,14 +277,22 @@ class LiteLLMWorker:
     def __call__(self, role_name: str, messages: list, agent_id: int) -> str:
         spec = self.slot_specs[agent_id % len(self.slot_specs)]
         msgs = [{"role": m["role"], "content": m["content"]} for m in messages]
-        kw = dict(model=spec.model, messages=msgs,
-                  max_tokens=self.max_tokens, temperature=self.temperature)
-        api_key = spec.api_key or self.api_key
-        api_base = spec.api_base or self.api_base
-        if api_key:  kw["api_key"] = api_key
-        if api_base: kw["api_base"] = api_base
-        r = self.litellm.completion(**kw)
-        return r.choices[0].message.content or ""
+        return completion_content(
+            spec,
+            msgs,
+            api_key=self.api_key,
+            api_base=self.api_base,
+            max_tokens=self.max_tokens,
+            temperature=self.temperature,
+        )
+
+    def check_connectivity(self, label: str = "worker pool") -> None:
+        check_litellm_connectivity(
+            self.slot_specs,
+            api_key=self.api_key,
+            api_base=self.api_base,
+            label=label,
+        )
 
 
 # ---- the coordination loop (step_trinity, faithful) -------------------------
@@ -504,6 +522,7 @@ def main(argv=None):
             specs = load_slot_specs(args.slot_config, args.slot_config_env, min_count=1, max_count=N_AGENTS)
             models = args.slot_models.split(",") if args.slot_models else None
             worker = LiteLLMWorker(slot_models=models, slot_specs=specs)
+            worker.check_connectivity()
             print(f"worker pool: LiteLLMWorker (live, via litellm, {len(worker.slot_models)} slots)")
         else:
             worker = MockWorker()

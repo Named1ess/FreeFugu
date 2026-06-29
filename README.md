@@ -60,6 +60,12 @@ export FUGU_API_KEY=...  FUGU_BASE_URL=...
 python openfugu/mini.py --demo --live \
   --slot-models "novita/deepseek/deepseek-v4-flash,novita/zai-org/glm-5,..."
 
+# API URL note: FUGU_BASE_URL / slot api_base is a LiteLLM base URL,
+# not the full /chat/completions endpoint. Whether the base includes /v1
+# depends on the provider, e.g. OpenAI uses https://api.openai.com/v1,
+# while DeepSeek can use https://api.deepseek.com. Anthropic-prefixed
+# models are translated by LiteLLM. Live runs preflight a tiny request first.
+
 # TRAIN: a Conductor on ToolScale (8x A800-class; HF generation, no vLLM)
 python train/train_conductor.py           # reward climbs off zero; saves checkpoint
 
