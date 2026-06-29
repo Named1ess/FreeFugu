@@ -130,6 +130,13 @@ function slotCountValue(opId, field) {
   return clampNumber(saved || field.slots || maxSlots, minSlots, maxSlots);
 }
 
+function slotJsonRows(data) {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.slots)) return data.slots;
+  if (Array.isArray(data?.slot_config)) return data.slot_config;
+  throw new Error("JSON 中没有可导入的 slots 数组");
+}
+
 function renderSlotConfigField(op, field) {
   const wrapper = el("section", "slot-config");
   wrapper.dataset.name = field.name;
@@ -153,6 +160,27 @@ function renderSlotConfigField(op, field) {
   head.append(countWrap, countText);
   wrapper.append(head);
 
+  const tools = el("div", "slot-tools");
+  const includeKeyLabel = el("label", "slot-toggle");
+  const includeKeyInput = document.createElement("input");
+  includeKeyInput.type = "checkbox";
+  includeKeyInput.checked = localStorage.getItem(storageKey(op.id, `${field.name}:json_api_key`)) === "true";
+  includeKeyLabel.append(includeKeyInput, el("span", "", "导出 API Key"));
+  includeKeyInput.addEventListener("change", () => {
+    localStorage.setItem(storageKey(op.id, `${field.name}:json_api_key`), String(includeKeyInput.checked));
+  });
+
+  const importInput = document.createElement("input");
+  importInput.type = "file";
+  importInput.accept = ".json,application/json";
+  importInput.hidden = true;
+  const importButton = el("button", "secondary slot-tool", "导入 JSON");
+  importButton.type = "button";
+  const exportButton = el("button", "secondary slot-tool", "导出 JSON");
+  exportButton.type = "button";
+  tools.append(includeKeyLabel, importButton, exportButton, importInput);
+  wrapper.append(tools);
+
   const grid = el("div", "slot-grid");
   const columns = [
     ["model", "模型", "openai/gpt-4o-mini", "text"],
@@ -166,6 +194,54 @@ function renderSlotConfigField(op, field) {
     grid.querySelectorAll(".slot-row").forEach((row) => {
       row.hidden = Number(row.dataset.slotIndex) >= activeSlots;
     });
+  }
+
+  function setSlotInput(index, slotField, value) {
+    const input = grid.querySelector(`[data-slot-index="${index}"][data-slot-field="${slotField}"]`);
+    if (!input) return;
+    input.value = value || "";
+    localStorage.setItem(slotStorageKey(op.id, field.name, index, slotField), input.value);
+  }
+
+  function currentSlots(includeApiKey) {
+    const slots = [];
+    grid.querySelectorAll(".slot-row:not([hidden])").forEach((row) => {
+      const slot = {};
+      row.querySelectorAll("[data-slot-field]").forEach((input) => {
+        const key = input.dataset.slotField;
+        const value = input.value.trim();
+        if (!value || (key === "api_key" && !includeApiKey)) return;
+        slot[key] = value;
+      });
+      if (slot.model || slot.api_base || slot.api_key) slots.push(slot);
+    });
+    return slots;
+  }
+
+  function applySlots(rows) {
+    const normalized = rows
+      .filter((row) => row && typeof row === "object")
+      .map((row) => ({
+        model: String(row.model || row.model_name || "").trim(),
+        api_base: String(row.api_base || row.base_url || row.url || "").trim(),
+        api_key: String(row.api_key || row.key || "").trim(),
+      }))
+      .filter((row) => row.model || row.api_base || row.api_key)
+      .slice(0, maxSlots);
+    if (!normalized.length) {
+      throw new Error("JSON 中没有有效槽位");
+    }
+
+    activeSlots = clampNumber(normalized.length, minSlots, maxSlots);
+    countInput.value = String(activeSlots);
+    localStorage.setItem(storageKey(op.id, `${field.name}:count`), String(activeSlots));
+    for (let index = 0; index < maxSlots; index += 1) {
+      const row = normalized[index] || {};
+      ["model", "api_base", "api_key"].forEach((slotField) => {
+        setSlotInput(index, slotField, row[slotField] || "");
+      });
+    }
+    updateVisibleRows();
   }
 
   countInput.addEventListener("input", () => {
@@ -196,6 +272,31 @@ function renderSlotConfigField(op, field) {
     });
     grid.append(row);
   }
+
+  importButton.addEventListener("click", () => {
+    importInput.value = "";
+    importInput.click();
+  });
+  importInput.addEventListener("change", async () => {
+    const file = importInput.files && importInput.files[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      applySlots(slotJsonRows(data));
+    } catch (error) {
+      alert(error.message);
+    }
+  });
+  exportButton.addEventListener("click", () => {
+    const blob = new Blob([`${JSON.stringify(currentSlots(includeKeyInput.checked), null, 2)}\n`], {
+      type: "application/json",
+    });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = `${op.id}-${field.name}.json`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  });
 
   wrapper.append(grid);
   updateVisibleRows();

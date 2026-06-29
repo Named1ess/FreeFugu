@@ -43,7 +43,13 @@ from mini import (  # noqa: E402
     N_AGENTS,
     VEC_LEN,
 )
-from slot_config import SlotSpec, check_litellm_connectivity, load_slot_specs, slot_labels  # noqa: E402
+from slot_config import (  # noqa: E402
+    SlotSpec,
+    check_litellm_connectivity,
+    litellm_credentials,
+    load_slot_specs,
+    slot_labels,
+)
 
 
 DEFAULT_VECTOR = ROOT / "artifacts" / "model_iter_identity.npy"
@@ -103,25 +109,55 @@ def parse_local_specs(csv: str) -> list[tuple[str, str, str]]:
     return specs
 
 
-def sanitized_slot_specs(specs: list[SlotSpec] | None) -> list[dict[str, Any]]:
+def sanitized_slot_specs(
+    specs: list[SlotSpec] | None,
+    *,
+    export_api_keys: bool = False,
+    api_key: str | None = None,
+    api_base: str | None = None,
+) -> list[dict[str, Any]]:
     if not specs:
         return []
     rows = []
     for index, spec in enumerate(specs):
+        credentials = litellm_credentials(spec, api_key=api_key, api_base=api_base)
+        effective_base = credentials.get("api_base") or ""
+        effective_key = credentials.get("api_key")
         row: dict[str, Any] = {
             "slot": index,
             "model": spec.model,
-            "api_base": spec.api_base or "",
-            "has_api_key": bool(spec.api_key),
+            "api_base": spec.api_base or effective_base,
+            "has_api_key": bool(effective_key),
         }
+        if export_api_keys and effective_key:
+            row["api_key"] = effective_key
         if spec.label:
             row["label"] = spec.label
         rows.append(row)
     return rows
 
 
-def sanitized_csv_slots(models: list[str]) -> list[dict[str, Any]]:
-    return [{"slot": index, "model": model} for index, model in enumerate(models)]
+def sanitized_csv_slots(
+    models: list[str],
+    *,
+    export_api_keys: bool = False,
+    api_key: str | None = None,
+    api_base: str | None = None,
+) -> list[dict[str, Any]]:
+    rows = []
+    for index, model in enumerate(models):
+        spec = SlotSpec(model=model)
+        credentials = litellm_credentials(spec, api_key=api_key, api_base=api_base)
+        row: dict[str, Any] = {
+            "slot": index,
+            "model": model,
+            "api_base": credentials.get("api_base") or "",
+            "has_api_key": bool(credentials.get("api_key")),
+        }
+        if export_api_keys and credentials.get("api_key"):
+            row["api_key"] = credentials["api_key"]
+        rows.append(row)
+    return rows
 
 
 def sanitized_local_specs(specs: list[tuple[str, str, str]]) -> list[dict[str, str]]:
@@ -222,7 +258,12 @@ def build_worker(args: argparse.Namespace) -> WorkerBuild:
         )
         labels = slot_labels(specs)
         source = "slot_config"
-        slot_rows = sanitized_slot_specs(specs)
+        slot_rows = sanitized_slot_specs(
+            specs,
+            export_api_keys=args.export_api_keys,
+            api_key=worker.api_key,
+            api_base=worker.api_base,
+        )
     elif slots:
         specs = [SlotSpec(model=model) for model in slots]
         worker = LiteLLMWorker(slot_specs=specs, max_tokens=args.max_tokens, temperature=args.temperature)
@@ -234,7 +275,12 @@ def build_worker(args: argparse.Namespace) -> WorkerBuild:
         )
         labels = slots
         source = "slot_models"
-        slot_rows = sanitized_csv_slots(slots)
+        slot_rows = sanitized_csv_slots(
+            slots,
+            export_api_keys=args.export_api_keys,
+            api_key=worker.api_key,
+            api_base=worker.api_base,
+        )
     else:
         raise ValueError("provide LiteLLM slots via --slot-config-env/--slot-config/--slot-models, or --local-models")
 
@@ -281,6 +327,7 @@ def write_sidecar_json(
             "temperature": args.temperature,
             "seed": args.seed,
             "diagonal_cma": not args.no_diagonal,
+            "export_api_keys": args.export_api_keys,
         },
         "result": {
             "base_solved": base_fit,
@@ -288,7 +335,11 @@ def write_sidecar_json(
             "delta": best_fit - base_fit,
         },
         "notes": [
-            "API keys are intentionally not stored in this sidecar.",
+            (
+                "API keys were exported because --export-api-keys was set."
+                if args.export_api_keys
+                else "API keys are intentionally not stored in this sidecar."
+            ),
             "If slot_count is less than 7, TRINITY agent_id maps to slot by agent_id % slot_count.",
         ],
     }
@@ -324,6 +375,8 @@ def main(argv: list[str] | None = None) -> int:
                     help="resume from --checkpoint if it exists")
     ap.add_argument("--save-every", type=int, default=1,
                     help="save checkpoint every N iters (default 1 = every iter)")
+    ap.add_argument("--export-api-keys", action="store_true",
+                    help="write effective slot API keys into the sidecar JSON")
     args = ap.parse_args(argv)
 
     import cma

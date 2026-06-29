@@ -1,6 +1,7 @@
 """Shared LiteLLM slot configuration helpers."""
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import ssl
@@ -19,10 +20,37 @@ _RETRYABLE_HTTP_CODES = frozenset({408, 409, 429, 500, 502, 503, 504})
 def _is_retryable(exc: Exception) -> bool:
     if isinstance(exc, urllib.error.HTTPError):
         return exc.code in _RETRYABLE_HTTP_CODES
-    if isinstance(exc, (urllib.error.URLError, ssl.SSLError, ConnectionError, TimeoutError, OSError)):
+    if isinstance(
+        exc,
+        (
+            http.client.HTTPException,
+            urllib.error.URLError,
+            ssl.SSLError,
+            ConnectionError,
+            TimeoutError,
+            OSError,
+        ),
+    ):
         return True
     msg = str(exc).lower()
-    return any(k in msg for k in ("ssl", "eof", "timeout", "timed out", "connection", "reset", "unreachable"))
+    if any(
+        k in msg
+        for k in (
+            "ssl",
+            "eof",
+            "timeout",
+            "timed out",
+            "connection",
+            "reset",
+            "unreachable",
+            "incompleteread",
+            "incomplete read",
+            "chunk",
+            "chunked",
+        )
+    ):
+        return True
+    return any(f"http {code}" in msg for code in _RETRYABLE_HTTP_CODES)
 
 
 def _retry_forever(fn, *, label: str = "api", interval: float = _RETRY_INTERVAL, max_retries: int | None = None):

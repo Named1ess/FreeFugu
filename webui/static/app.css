@@ -436,6 +436,7 @@ button:disabled {
 
 .slot-config-head span,
 .slot-count span,
+.slot-toggle span,
 .slot-input span {
   color: var(--muted);
   font-family: "IBM Plex Sans Condensed", Bahnschrift, "Microsoft YaHei", sans-serif;
@@ -447,6 +448,33 @@ button:disabled {
 
 .slot-config-head small {
   color: var(--teal-dark);
+  font-size: 12px;
+}
+
+.slot-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.slot-toggle {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+}
+
+.slot-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--rust);
+}
+
+.slot-tool {
+  min-height: 32px;
+  padding: 0 10px;
   font-size: 12px;
 }
 

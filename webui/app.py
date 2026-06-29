@@ -414,6 +414,12 @@ OPERATIONS: list[dict[str, Any]] = [
                 "default": _path("artifacts", "trinity_perstep.npy"),
             },
             {
+                "name": "export_api_keys",
+                "label": "metadata JSON 导出 API Key",
+                "type": "checkbox",
+                "flag": "--export-api-keys",
+            },
+            {
                 "name": "checkpoint",
                 "label": "checkpoint 路径",
                 "type": "text",
