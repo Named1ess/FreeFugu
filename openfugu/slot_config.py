@@ -28,12 +28,12 @@ def _is_retryable(exc: Exception) -> bool:
 def _retry_forever(fn, *, label: str = "api", interval: float = _RETRY_INTERVAL, max_retries: int | None = None):
     """Call fn() with unlimited retries on transient/network errors.
 
-    Prints a one-line status on every failure so the WebUI log panel surfaces
-    "连不上" in real time. Returns fn()'s return value on success."""
+    Prints a one-line status on every failure and on recovery so the WebUI log
+    panel surfaces "连不上" / "已恢复" in real time. Returns fn()'s return value."""
     attempt = 0
     while True:
         try:
-            return fn()
+            result = fn()
         except Exception as exc:
             attempt += 1
             if max_retries is not None and attempt > max_retries:
@@ -48,6 +48,10 @@ def _retry_forever(fn, *, label: str = "api", interval: float = _RETRY_INTERVAL,
                 flush=True,
             )
             time.sleep(interval)
+            continue
+        if attempt > 0:
+            print(f"[retry] {label} 已恢复 — 第 {attempt + 1} 次尝试成功", flush=True)
+        return result
 
 
 @dataclass(frozen=True)
