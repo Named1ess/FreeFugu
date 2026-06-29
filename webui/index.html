@@ -56,7 +56,16 @@
             <span>EXECUTION DETAIL</span>
             <strong>参数填写</strong>
           </div>
-          <section id="operationDetail" class="operation-detail" aria-live="polite"></section>
+          <div class="operation-detail-split">
+            <section id="operationDetail" class="operation-detail" aria-live="polite"></section>
+            <aside class="result-pane" aria-label="执行结果">
+              <div class="pane-title small">
+                <span>RESULT</span>
+                <strong>执行结果</strong>
+              </div>
+              <div id="resultPane" class="result-pane-body"></div>
+            </aside>
+          </div>
         </section>
 
         <section class="monitor-pane" aria-label="任务观察区">

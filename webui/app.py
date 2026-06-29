@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -880,6 +881,120 @@ def infer_sidecar_path(out_path: str | None) -> Path | None:
     return path.with_suffix(".json")
 
 
+def parse_log_summary(logs: list[str]) -> dict[str, Any]:
+    """Scan job logs for structured result lines and return a summary dict.
+
+    Recognizes the common patterns emitted by train/eval/serve scripts:
+      [result] key=value ...
+      [iter N] best_solved=X (base Y, cache=Z)
+      PASS / FAIL verdicts
+      eval comparison tables
+    """
+    text = "".join(logs)
+    if not text.strip():
+        return {}
+
+    metrics: dict[str, Any] = {}
+    summary: dict[str, Any] = {}
+    rows: list[dict[str, Any]] = []
+    highlights: list[str] = []
+    verdict: str = ""
+
+    # [result] lines — key=value or free text
+    for m in re.finditer(r"\[result\]\s*(.+)", text):
+        line = m.group(1).strip()
+        highlights.append(line)
+        # "coordinator 0.812 vs best single 0.625 (label) -> -7%"
+        cmp = re.search(
+            r"coordinator\s+([\d.]+)\s+vs\s+best\s+single\s+([\d.]+)(?:\s*\(([^)]+)\))?\s*->\s*([+\-]?[\d.]+)%",
+            line,
+        )
+        if cmp:
+            metrics["coordinator"] = float(cmp.group(1))
+            metrics["best_single"] = float(cmp.group(2))
+            metrics["best_single_label"] = cmp.group(3) or ""
+            metrics["lift_pct"] = float(cmp.group(4))
+            summary["coordinator"] = float(cmp.group(1))
+            summary["best_single"] = float(cmp.group(2))
+            summary["lift_pct"] = float(cmp.group(4))
+            if cmp.group(3):
+                summary["best_single_label"] = cmp.group(3)
+        # "per-step trained head solved=X vs base Y"
+        train = re.search(r"solved=([\d.]+)\s+vs\s+base\s+([\d.]+)", line)
+        if train:
+            metrics["solved"] = float(train.group(1))
+            metrics["base"] = float(train.group(2))
+            summary["solved"] = float(train.group(1))
+            summary["base"] = float(train.group(2))
+        # "coordinator reaches NN% of oracle ceiling"
+        oracle = re.search(r"reaches\s+([\d.]+)%\s+of\s+oracle", line)
+        if oracle:
+            metrics["oracle_pct"] = float(oracle.group(1))
+            summary["oracle_pct"] = float(oracle.group(1))
+        # "saved <path> (NNN floats)"
+        saved = re.search(r"saved\s+(\S+)\s+\((\d+)\s+floats\)", line)
+        if saved:
+            summary["saved_path"] = saved.group(1)
+            summary["head_floats"] = int(saved.group(2))
+
+    # [iter N] lines — best/base/cache progression
+    iter_matches = re.findall(
+        r"\[iter\s+(\d+)\]\s+best_solved=([\d.]+)\s+\(base\s+([\d.]+),\s+cache=(\d+)\)", text
+    )
+    if iter_matches:
+        last = iter_matches[-1]
+        summary["last_iter"] = int(last[0])
+        metrics["last_best_solved"] = float(last[1])
+        metrics["last_base"] = float(last[2])
+        metrics["cache"] = int(last[3])
+        # track best across all iters
+        best_iter = max(iter_matches, key=lambda x: float(x[1]))
+        metrics["peak_solved"] = float(best_iter[1])
+        summary["peak_solved"] = float(best_iter[1])
+
+    # base rollout line
+    base_match = re.search(r"\[perstep\]\s+base\s+rollout\s+solved=([\d.]+)", text)
+    if base_match:
+        metrics.setdefault("base", float(base_match.group(1)))
+
+    # eval comparison table rows: "  label alone : 0.XXX" or "  trained coordinator : 0.XXX"
+    for row in re.finditer(
+        r"^\s{2,}(\S[^\n:]*?)\s+(?:alone\s*)?:\s*([\d.]+)(\s+\d+/\d+)?(?:\s+<-\s+(best single))?",
+        text,
+        re.MULTILINE,
+    ):
+        label = row.group(1).strip()
+        if label.lower().startswith("oracle"):
+            continue  # handled separately below
+        rate = float(row.group(2))
+        rows.append({
+            "label": label,
+            "rate": rate,
+            "count": (row.group(3) or "").strip(),
+            "best_single": bool(row.group(4)),
+        })
+
+    # oracle row
+    oracle_row = re.search(r"^\s{2,}oracle[^\n:]*?:\s*([\d.]+)", text, re.MULTILINE)
+    if oracle_row:
+        metrics.setdefault("oracle", float(oracle_row.group(1)))
+        rows.append({"label": "oracle (ceiling)", "rate": float(oracle_row.group(1))})
+
+    # verdict
+    if re.search(r"\bPASS\b", text):
+        verdict = "PASS"
+    elif re.search(r"\bFAIL\b", text):
+        verdict = "FAIL"
+
+    return {
+        "metrics": metrics,
+        "summary": summary,
+        "rows": rows,
+        "highlights": highlights,
+        "verdict": verdict,
+    }
+
+
 def build_job_result(job: Job, code: int | None = None) -> dict[str, Any]:
     exit_code = job.exit_code if code is None else code
     duration = None
@@ -916,6 +1031,23 @@ def build_job_result(job: Job, code: int | None = None) -> dict[str, Any]:
         result["training"] = sanitize_json_for_ui(sidecar.get("training") or {})
         result["slots"] = sanitize_json_for_ui(sidecar.get("slots") or [])
         result["sidecar_path"] = str(sidecar_path)
+
+    parsed = parse_log_summary(job.logs)
+    if parsed:
+        if "metrics" not in result:
+            result["metrics"] = {}
+        if "summary" not in result:
+            result["summary"] = {}
+        for key, value in parsed.get("metrics", {}).items():
+            result["metrics"].setdefault(key, value)
+        result["summary"].update(parsed.get("summary", {}))
+        if parsed.get("verdict"):
+            result["summary"].setdefault("verdict", parsed["verdict"])
+        if parsed.get("rows"):
+            result.setdefault("table", parsed["rows"])
+        if parsed.get("highlights"):
+            result.setdefault("highlights", parsed["highlights"])
+
     if exit_code not in (None, 0):
         with job.lock:
             tail = [line.strip() for line in job.logs[-12:] if line.strip()]

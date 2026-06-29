@@ -150,6 +150,128 @@ function renderJobResult(job) {
   }
 }
 
+function renderResultPane(job) {
+  const root = $("#resultPane");
+  if (!root) return;
+  root.replaceChildren();
+  if (!job || !job.result) return;
+
+  const r = job.result || {};
+  const s = r.summary || {};
+  const m = r.metrics || {};
+  const rows = Array.isArray(r.table) ? r.table : [];
+  const highlights = Array.isArray(r.highlights) ? r.highlights : [];
+  const status = r.status || job.status;
+
+  // verdict badge
+  const verdict = s.verdict || r.verdict;
+  if (verdict) {
+    const cls = verdict === "PASS" ? "pass" : verdict === "FAIL" ? "fail" : "running";
+    root.append(el("div", `rp-verdict ${cls}`, verdict));
+  } else if (status === "running") {
+    root.append(el("div", "rp-verdict running", "运行中..."));
+  } else if (status === "succeeded") {
+    root.append(el("div", "rp-verdict pass", "完成"));
+  } else if (status === "failed") {
+    root.append(el("div", "rp-verdict fail", "出错"));
+  }
+
+  // lift headline (eval)
+  if ("lift_pct" in s && "coordinator" in s && "best_single" in s) {
+    const lift = s.lift_pct;
+    const cls = lift > 0 ? "pos" : "neg";
+    const row = el("div", "rp-stat-row");
+    row.append(el("span", "", "coordinator vs best single"));
+    const strong = el("strong", `rp-lift ${cls}`, `${lift > 0 ? "+" : ""}${lift.toFixed(0)}%`);
+    row.append(strong);
+    root.append(row);
+    const sub = el("div", "rp-stat-row");
+    sub.append(el("span", "", `${s.coordinator.toFixed(3)} vs ${s.best_single.toFixed(3)}`));
+    if (s.best_single_label) sub.append(el("strong", "", s.best_single_label));
+    root.append(sub);
+  }
+
+  // training headline
+  if ("solved" in s && "base" in s) {
+    const delta = s.solved - s.base;
+    const row = el("div", "rp-stat-row");
+    row.append(el("span", "", "solved vs base"));
+    const cls = delta > 0 ? "delta-good" : delta < 0 ? "delta-bad" : "";
+    row.append(el("strong", cls, `${s.solved.toFixed(3)} / ${s.base.toFixed(3)}`));
+    root.append(row);
+    if (s.peak_solved !== undefined && s.peak_solved !== s.solved) {
+      const peak = el("div", "rp-stat-row");
+      peak.append(el("span", "", "peak solved"));
+      peak.append(el("strong", "delta-good", s.peak_solved.toFixed(3)));
+      root.append(peak);
+    }
+  }
+
+  // oracle reach
+  if ("oracle_pct" in s) {
+    const row = el("div", "rp-stat-row");
+    row.append(el("span", "", "oracle ceiling"));
+    row.append(el("strong", "", `${s.oracle_pct.toFixed(0)}%`));
+    root.append(row);
+  }
+
+  // saved head info
+  if (s.saved_path) {
+    const row = el("div", "rp-stat-row");
+    row.append(el("span", "", "saved head"));
+    const info = s.head_floats ? `${s.head_floats} floats` : "";
+    row.append(el("strong", "", info));
+    root.append(row);
+  }
+
+  // training progress
+  const iterRows = (job.logs || []).join("").match(/\[iter\s+\d+\][^\n]*/g) || [];
+  if (iterRows.length) {
+    root.append(el("div", "rp-section-title", "训练进度"));
+    const prog = el("div", "rp-progress");
+    const last5 = iterRows.slice(-5);
+    last5.forEach((line) => {
+      const m2 = line.match(/\[iter\s+(\d+)\]\s+best_solved=([\d.]+)/);
+      if (!m2) return;
+      const row = el("div", "rp-progress-row");
+      row.append(el("span", "", `iter ${m2[1]}`), el("span", "rp-peak", `best=${m2[2]}`));
+      prog.append(row);
+    });
+    root.append(prog);
+  }
+
+  // comparison table
+  if (rows.length) {
+    root.append(el("div", "rp-section-title", "策略对比"));
+    const table = el("div", "rp-table");
+    const maxRate = Math.max(...rows.map((row) => row.rate || 0), 0.001);
+    rows.forEach((row) => {
+      const cls = row.best_single ? "best" : (row.label || "").includes("coordinator") ? "coordinator" : (row.label || "").toLowerCase().includes("oracle") ? "oracle" : "";
+      const item = el("div", `rp-table-row ${cls}`);
+      const pct = ((row.rate / maxRate) * 100).toFixed(0);
+      const label = el("span", "rp-label", row.label);
+      const rate = el("span", "rp-rate", row.rate.toFixed(3));
+      const bar = el("div", "rp-bar");
+      bar.append(el("div", "rp-bar-fill"));
+      bar.firstChild.style.width = `${pct}%`;
+      if (row.best_single) label.textContent = `★ ${row.label}`;
+      item.append(label, rate, bar);
+      table.append(item);
+    });
+    root.append(table);
+  }
+
+  // highlights
+  if (highlights.length) {
+    root.append(el("div", "rp-section-title", "关键输出"));
+    const list = el("div", "rp-highlights");
+    highlights.slice(-6).forEach((line) => {
+      list.append(el("div", "rp-highlight", line));
+    });
+    root.append(list);
+  }
+}
+
 function renderGroups() {
   const nav = $("#groupNav");
   nav.replaceChildren();
@@ -599,6 +721,7 @@ function renderJob(job) {
   if (!job) {
     meta.textContent = "暂无任务";
     renderJobResult(null);
+    renderResultPane(null);
     log.textContent = "";
     state.renderedJobId = null;
     cancel.disabled = true;
@@ -613,6 +736,7 @@ function renderJob(job) {
 
   meta.textContent = `${job.title} · ${statusLabel(job.status)}${code} · ${job.command.join(" ")}`;
   renderJobResult(job);
+  renderResultPane(job);
   if (jobChanged || log.textContent !== nextLog) {
     log.textContent = nextLog;
     if (jobChanged || wasNearBottom) {

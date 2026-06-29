@@ -379,6 +379,20 @@ def main(argv: list[str] | None = None) -> int:
                     help="save checkpoint every N iters (default 1 = every iter)")
     ap.add_argument("--export-api-keys", action="store_true",
                     help="write effective slot API keys into the sidecar JSON")
+    ap.add_argument("--adaptive-sigma", action="store_true",
+                    help="adjust CMA sigma based on cache growth (explore when stuck)")
+    ap.add_argument("--cache-low", type=int, default=10,
+                    help="cache delta below this -> boost sigma (default 10)")
+    ap.add_argument("--cache-high", type=int, default=40,
+                    help="cache delta above this -> damp sigma (default 40)")
+    ap.add_argument("--sigma-boost", type=float, default=1.5,
+                    help="multiply sigma by this when cache too low (default 1.5)")
+    ap.add_argument("--sigma-damp", type=float, default=0.7,
+                    help="multiply sigma by this when cache too high (default 0.7)")
+    ap.add_argument("--sigma-min", type=float, default=0.05,
+                    help="floor for sigma (default 0.05)")
+    ap.add_argument("--sigma-max", type=float, default=3.0,
+                    help="ceiling for sigma (default 3.0)")
     args = ap.parse_args(argv)
 
     import cma

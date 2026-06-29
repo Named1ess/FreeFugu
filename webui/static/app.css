@@ -362,6 +362,60 @@ button:disabled {
   overflow: hidden;
 }
 
+.operation-detail-split {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  gap: 12px;
+  overflow: hidden;
+  padding: 12px;
+}
+
+.operation-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 0;
+}
+
+.result-pane {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+.result-pane-body {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+
+.result-pane-body:empty::before {
+  content: "暂无结果 — 运行任务后这里会显示结构化结果";
+  color: var(--muted);
+  font-size: 13px;
+  padding: 24px 12px;
+  text-align: center;
+}
+
+.pane-title.small {
+  min-height: 36px;
+}
+
+.pane-title.small strong {
+  font-size: 12px;
+}
+
 .pane-title {
   min-height: 42px;
   padding: 0 12px;
@@ -898,6 +952,153 @@ button:disabled {
   font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
   font-size: 11px;
 }
+
+/* ===== result pane (right side of EXECUTION DETAIL) ===== */
+.rp-verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+.rp-verdict.pass {
+  background: rgba(52, 211, 153, 0.15);
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  color: #34d399;
+}
+.rp-verdict.fail {
+  background: rgba(255, 100, 124, 0.12);
+  border: 1px solid rgba(255, 100, 124, 0.36);
+  color: #ff647c;
+}
+.rp-verdict.running {
+  background: rgba(0, 212, 255, 0.1);
+  border: 1px solid rgba(0, 212, 255, 0.36);
+  color: var(--cyan);
+}
+
+.rp-stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--well);
+}
+.rp-stat-row span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.rp-stat-row strong {
+  color: var(--ink);
+  font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 14px;
+}
+.rp-stat-row .delta-good { color: #34d399; }
+.rp-stat-row .delta-bad  { color: #ff647c; }
+
+.rp-lift {
+  font-size: 20px;
+  font-weight: 800;
+}
+.rp-lift.pos { color: #34d399; }
+.rp-lift.neg { color: #ff647c; }
+
+.rp-section-title {
+  color: var(--cyan-2);
+  font-family: "IBM Plex Sans Condensed", Bahnschrift, "Microsoft YaHei", sans-serif;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.rp-table {
+  display: grid;
+  gap: 4px;
+}
+.rp-table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--surface);
+}
+.rp-table-row.best {
+  border-color: rgba(52, 211, 153, 0.4);
+  background: rgba(52, 211, 153, 0.06);
+}
+.rp-table-row.coordinator {
+  border-color: rgba(0, 212, 255, 0.4);
+  background: rgba(0, 212, 255, 0.06);
+}
+.rp-table-row.oracle {
+  border-style: dashed;
+  opacity: 0.8;
+}
+.rp-table-row .rp-label {
+  font-size: 12px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rp-table-row .rp-rate {
+  font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.rp-table-row .rp-bar {
+  width: 60px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.rp-table-row .rp-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--cyan);
+}
+.rp-table-row.best .rp-bar-fill { background: #34d399; }
+.rp-table-row.oracle .rp-bar-fill { background: var(--muted); }
+
+.rp-highlights {
+  display: grid;
+  gap: 4px;
+}
+.rp-highlight {
+  padding: 5px 8px;
+  border-left: 3px solid var(--cyan);
+  background: var(--well);
+  border-radius: 0 4px 4px 0;
+  font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--well-text);
+  overflow-wrap: anywhere;
+}
+
+.rp-progress {
+  display: grid;
+  gap: 3px;
+}
+.rp-progress-row {
+  display: flex;
+  justify-content: space-between;
+  font-family: "IBM Plex Mono", "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+.rp-progress-row .rp-peak { color: #34d399; }
 
 .log-output,
 .mini-output {
