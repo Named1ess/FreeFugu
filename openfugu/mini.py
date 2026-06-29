@@ -284,6 +284,7 @@ class LiteLLMWorker:
             api_base=self.api_base,
             max_tokens=self.max_tokens,
             temperature=self.temperature,
+            label=f"slot {agent_id % len(self.slot_specs)} {spec.model}",
         )
 
     def check_connectivity(self, label: str = "worker pool") -> None:

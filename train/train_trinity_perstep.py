@@ -18,8 +18,10 @@ import argparse
 import faulthandler
 import json
 import os
+import pickle
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -46,6 +48,7 @@ from slot_config import SlotSpec, check_litellm_connectivity, load_slot_specs, s
 
 DEFAULT_VECTOR = ROOT / "artifacts" / "model_iter_identity.npy"
 DEFAULT_HEAD = ROOT / "artifacts" / "trinity_perstep.npy"
+DEFAULT_CKPT = ROOT / "artifacts" / "trinity_perstep.ckpt.pkl"
 
 
 def numeric_answer(text: str | None) -> str | None:
@@ -315,6 +318,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--no-diagonal", action="store_true", help="use full CMA instead of sep-CMA")
     ap.add_argument("--out", default=str(DEFAULT_HEAD))
+    ap.add_argument("--checkpoint", default=str(DEFAULT_CKPT),
+                    help="checkpoint path for mid-run saves and resume")
+    ap.add_argument("--resume", action="store_true",
+                    help="resume from --checkpoint if it exists")
+    ap.add_argument("--save-every", type=int, default=1,
+                    help="save checkpoint every N iters (default 1 = every iter)")
     args = ap.parse_args(argv)
 
     import cma
@@ -354,13 +363,72 @@ def main(argv: list[str] | None = None) -> int:
         flush=True,
     )
 
-    opts = {"seed": args.seed, "verbose": -9}
-    if not args.no_diagonal:
-        opts["CMA_diagonal"] = True
-    es = cma.CMAEvolutionStrategy(base_head, args.sigma0, opts)
-    best_vec, best_fit = base_head, base_fit
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    ckpt_path = Path(args.checkpoint)
+    ckpt_path.parent.mkdir(parents=True, exist_ok=True)
 
-    for iteration in range(args.iters):
+    def save_checkpoint(iteration: int, es_obj: Any, best_v: np.ndarray, best_f: float,
+                        bf: float, out_path: Path, ck_path: Path) -> None:
+        ckpt = {
+            "es": es_obj,
+            "best_vec": best_v.copy(),
+            "best_fit": float(best_f),
+            "base_fit": float(bf),
+            "iteration": iteration,
+            "args": {
+                "n_train": args.n_train,
+                "iters": args.iters,
+                "sigma0": args.sigma0,
+                "seed": args.seed,
+                "no_diagonal": args.no_diagonal,
+                "max_turns": args.max_turns,
+            },
+            "saved_at": time.time(),
+        }
+        tmp_ckpt = ck_path.with_suffix(ck_path.suffix + ".tmp")
+        with open(tmp_ckpt, "wb") as f:
+            pickle.dump(ckpt, f, protocol=pickle.HIGHEST_PROTOCOL)
+        tmp_ckpt.replace(ck_path)
+        np.save(out_path, best_v)
+
+    start_iter = 0
+    if args.resume and ckpt_path.exists():
+        with open(ckpt_path, "rb") as f:
+            ckpt = pickle.load(f)
+        ck_args = ckpt.get("args", {})
+        for key in ("n_train", "sigma0", "seed", "no_diagonal", "max_turns"):
+            if ck_args.get(key) != getattr(args, key):
+                raise ValueError(
+                    f"checkpoint args mismatch on '{key}': "
+                    f"ckpt={ck_args.get(key)} vs cli={getattr(args, key)}. "
+                    f"Use the same --n-train/--sigma0/--seed/--max-turns, or delete {ckpt_path} to start fresh."
+                )
+        es = ckpt["es"]
+        best_vec = np.asarray(ckpt["best_vec"]).copy()
+        best_fit = float(ckpt["best_fit"])
+        base_fit = float(ckpt["base_fit"])
+        start_iter = int(ckpt["iteration"]) + 1
+        print(
+            f"[perstep] resumed from {ckpt_path}: "
+            f"iter {start_iter}/{args.iters}, best={best_fit:.3f}, base={base_fit:.3f}",
+            flush=True,
+        )
+        if start_iter >= args.iters:
+            print(f"[perstep] checkpoint already at iter {start_iter} >= iters {args.iters}; saving and exiting")
+            np.save(out, best_vec)
+            sidecar = write_sidecar_json(out, args, worker_build, vector, base_fit, best_fit, best_vec.shape[0])
+            print(f"[result] saved {out} ({best_vec.shape[0]} floats)")
+            print(f"[result] saved slot metadata {sidecar}")
+            return 0
+    else:
+        opts = {"seed": args.seed, "verbose": -9}
+        if not args.no_diagonal:
+            opts["CMA_diagonal"] = True
+        es = cma.CMAEvolutionStrategy(base_head, args.sigma0, opts)
+        best_vec, best_fit = base_head, base_fit
+
+    for iteration in range(start_iter, args.iters):
         candidates = es.ask()
         fits = [rollout_solved(np.asarray(candidate)) for candidate in candidates]
         es.tell(candidates, [-fit for fit in fits])
@@ -373,9 +441,10 @@ def main(argv: list[str] | None = None) -> int:
             f"(base {base_fit:.3f}, cache={len(worker.cache)})",
             flush=True,
         )
+        if (iteration + 1) % args.save_every == 0 or iteration == args.iters - 1:
+            save_checkpoint(iteration, es, best_vec, best_fit, base_fit, out, ckpt_path)
+            print(f"[ckpt] saved iter {iteration} -> {ckpt_path} + {out}", flush=True)
 
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
     np.save(out, best_vec)
     sidecar = write_sidecar_json(out, args, worker_build, vector, base_fit, best_fit, best_vec.shape[0])
     print(f"\n[result] per-step trained head solved={best_fit:.3f} vs base {base_fit:.3f}")

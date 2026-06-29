@@ -413,6 +413,19 @@ OPERATIONS: list[dict[str, Any]] = [
                 "flag": "--out",
                 "default": _path("artifacts", "trinity_perstep.npy"),
             },
+            {
+                "name": "checkpoint",
+                "label": "checkpoint 路径",
+                "type": "text",
+                "flag": "--checkpoint",
+                "default": _path("artifacts", "trinity_perstep.ckpt.pkl"),
+            },
+            {
+                "name": "resume",
+                "label": "从 checkpoint 断点续训",
+                "type": "checkbox",
+                "flag": "--resume",
+            },
         ],
     },
     {

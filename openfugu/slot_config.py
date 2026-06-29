@@ -3,11 +3,51 @@ from __future__ import annotations
 
 import json
 import os
+import ssl
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
+
+
+_RETRY_INTERVAL = 5.0
+_RETRYABLE_HTTP_CODES = frozenset({408, 409, 429, 500, 502, 503, 504})
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code in _RETRYABLE_HTTP_CODES
+    if isinstance(exc, (urllib.error.URLError, ssl.SSLError, ConnectionError, TimeoutError, OSError)):
+        return True
+    msg = str(exc).lower()
+    return any(k in msg for k in ("ssl", "eof", "timeout", "timed out", "connection", "reset", "unreachable"))
+
+
+def _retry_forever(fn, *, label: str = "api", interval: float = _RETRY_INTERVAL, max_retries: int | None = None):
+    """Call fn() with unlimited retries on transient/network errors.
+
+    Prints a one-line status on every failure so the WebUI log panel surfaces
+    "连不上" in real time. Returns fn()'s return value on success."""
+    attempt = 0
+    while True:
+        try:
+            return fn()
+        except Exception as exc:
+            attempt += 1
+            if max_retries is not None and attempt > max_retries:
+                raise
+            if not _is_retryable(exc):
+                raise
+            kind = type(exc).__name__
+            detail = str(getattr(exc, "reason", exc))[:200]
+            print(
+                f"[retry] {label} 连不上: {kind}: {detail} — "
+                f"第 {attempt} 次重试，{interval:.0f}s 后再试",
+                flush=True,
+            )
+            time.sleep(interval)
 
 
 @dataclass(frozen=True)
@@ -179,32 +219,38 @@ def completion_content(
     max_tokens: int = 1024,
     temperature: float = 0.2,
     timeout: float | None = None,
+    label: str | None = None,
 ) -> str:
     credentials = litellm_credentials(spec, api_key=api_key, api_base=api_base)
     base = credentials.get("api_base")
-    if uses_openai_compatible_http(spec.model, base):
-        return openai_compatible_completion_content(
-            model=spec.model,
-            messages=messages,
-            api_key=credentials.get("api_key"),
-            api_base=base,
-            max_tokens=max_tokens,
-            temperature=temperature,
-            timeout=timeout,
-        )
+    tag = label or f"slot {spec.model}"
 
-    import litellm
+    def _call() -> str:
+        if uses_openai_compatible_http(spec.model, base):
+            return openai_compatible_completion_content(
+                model=spec.model,
+                messages=messages,
+                api_key=credentials.get("api_key"),
+                api_base=base,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                timeout=timeout,
+            )
 
-    kwargs: dict[str, Any] = {
-        "model": spec.model,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }
-    if timeout is not None:
-        kwargs["timeout"] = timeout
-    kwargs.update(credentials)
-    return litellm.completion(**kwargs).choices[0].message.content or ""
+        import litellm
+
+        kwargs: dict[str, Any] = {
+            "model": spec.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        kwargs.update(credentials)
+        return litellm.completion(**kwargs).choices[0].message.content or ""
+
+    return _retry_forever(_call, label=tag)
 
 
 def describe_api_format(model: str, api_base: str | None = None) -> str:
