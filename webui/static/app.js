@@ -77,6 +77,18 @@ function el(tag, className, text) {
   return node;
 }
 
+function installNumberWheelScroll() {
+  document.addEventListener(
+    "wheel",
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLInputElement) || target.type !== "number") return;
+      target.blur();
+    },
+    { capture: true, passive: true },
+  );
+}
+
 function resultValueText(value) {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(3);
@@ -822,6 +834,7 @@ async function sendChat() {
 }
 
 async function init() {
+  installNumberWheelScroll();
   const opData = await request("/api/operations");
   state.groups = opData.groups || [];
   state.operations = opData.operations || [];
