@@ -1,11 +1,11 @@
-# OpenFugu
+# FreeFugu
 
 **An open, runnable reverse-engineering of Sakana AI's Fugu — the "one model to
 command them all" LLM orchestrator.**
 
 Fugu is sold as a single model; it is really a *policy over models* — a tiny
 coordinator that, per query, routes work to a pool of frontier LLMs and returns
-one answer. Sakana's product and trained weights are closed. OpenFugu rebuilds
+one answer. Sakana's product and trained weights are closed. FreeFugu rebuilds
 the mechanism from the two papers + released artifacts, verifies it against real
 weights, trains a Conductor of our own, and serves it behind one OpenAI-compatible
 endpoint. Four stages, all working: **read → run → train → serve.**
@@ -26,7 +26,7 @@ gradient-free (sep-CMA-ES). No worker weights are ever touched — it is
 macro-level composition over other people's models. Full math, with an
 EXEC/CODE/DATA evidence grade on every claim, in `docs/`.
 
-OpenFugu implements **two orchestration lines**, both faithful to the papers:
+FreeFugu implements **two orchestration lines**, both faithful to the papers:
 
 | Line | Mechanism | Lives in |
 |------|-----------|----------|
@@ -258,5 +258,5 @@ applies — see `NOTICE`):
 
 ## License
 
-Apache-2.0 for all OpenFugu code (`LICENSE`). Third-party material is fetched,
+Apache-2.0 for all FreeFugu code (`LICENSE`). Third-party material is fetched,
 not redistributed; trained weights carry the Llama 3.2 license. See `NOTICE`.
